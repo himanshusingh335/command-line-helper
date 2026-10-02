@@ -22,7 +22,9 @@ Rules:
 - Output ONLY the command on a single line. No explanation, no markdown, no backticks, no leading "$".
 - Combine multiple steps with && on the same line.
 - macOS uses BSD tools: sed -i '\'''\'', stat -f, date -v, pbcopy, open. Homebrew is available.
-- Prefer common tools: git, docker, docker compose, conda, python3, pip, find, grep, rg, du, lsof, tar.
+- Prefer common tools: git, docker, docker compose, conda, python3, pip, find, grep, du, lsof, tar.
+- Only use flags that exist on macOS (no grep -P, no GNU-only options).
+- Do exactly what was asked: never add destructive or extra flags (like --hard, -a, -f, file filters) the user did not ask for.
 - Use the context (directory, files, git branch, conda env) when it helps; use placeholders like <name> only when the value is truly unknown.'
 
 # Few-shot examples: alternating request / command.
@@ -32,16 +34,23 @@ typeset -ga _CLH_EXAMPLES=(
   'create conda env named ml with python 3.11'             'conda create -n ml python=3.11 -y'
   'list conda environments'                                'conda env list'
   'show running docker containers'                         'docker ps'
+  'start compose services in background'                   'docker compose up -d'
   'follow logs of container web'                           'docker logs -f web'
   'open a shell inside container api'                      'docker exec -it api /bin/sh'
   'undo last commit but keep the changes'                  'git reset --soft HEAD~1'
   'create and switch to branch feature/login'              'git switch -c feature/login'
   'show git history as a graph'                            'git log --oneline --graph --decorate --all'
+  'discard local changes to app.js'                        'git restore app.js'
+  'show files changed in last commit'                      'git show --stat HEAD'
   'show size of each folder here sorted'                   'du -sh * | sort -h'
   'extract archive.tar.gz'                                 'tar -xzf archive.tar.gz'
   'search for TODO in all python files'                    'grep -rn "TODO" --include="*.py" .'
+  'search for error ignoring case'                         'grep -rni "error" .'
+  'count lines in all js files'                            'find . -name "*.js" -type f -exec cat {} + | wc -l'
+  'show the 5 biggest files here'                          'ls -lhS | head -n 6'
   'find files bigger than 100MB'                           'find . -type f -size +100M'
   'what is using port 8080'                                'lsof -i :8080'
+  'kill whatever is running on port 5000'                  'kill $(lsof -ti :5000)'
 )
 
 # --- core -------------------------------------------------------------------
