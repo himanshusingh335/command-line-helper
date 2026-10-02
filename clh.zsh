@@ -7,22 +7,45 @@
 #   <cmd> :: <change>       Enter → revise the command on the line
 #   <cmd> ::?  or  ::? <cmd> Enter → explain a command without running it
 #   ::fix                   Enter → correct the last command you ran
+#   ::help / ::settings     Enter → this help / change settings (also: clh help)
 #
 # Source this file from ~/.zshrc. Requires curl, jq and a running Ollama server.
 
-: ${CLH_MODEL:=qwen2.5-coder:1.5b}
-: ${CLH_URL:=http://localhost:11434}
-: ${CLH_PREFIX:=::}
-: ${CLH_TIMEOUT:=30}
-: ${CLH_WARM:=1}
-: ${CLH_AUTOSTART:=1}
-: ${CLH_OLLAMA_LOG:=$HOME/.ollama/clh-serve.log}
-: ${CLH_LEARN:=1}
-: ${CLH_HISTORY_FILE:=${XDG_DATA_HOME:-$HOME/.local/share}/clh/history.jsonl}
-: ${CLH_HISTORY_MAX:=500}
-: ${CLH_EXAMPLE_MODE:=all}
-: ${CLH_EXAMPLES_K:=8}
-: ${CLH_EMBED_MODEL:=nomic-embed-text}
+# Settings: name, type (bool, int, str or a|b|c), default, description.
+# Precedence: set before this file is sourced (e.g. in ~/.zshrc) > saved
+# with `clh set` in $CLH_CONFIG_FILE > default.
+typeset -ga _CLH_SETTINGS=(
+  CLH_MODEL         str               'qwen2.5-coder:1.5b'      'Ollama model that writes the commands'
+  CLH_URL           str               'http://localhost:11434'  'Ollama server'
+  CLH_PREFIX        str               '::'                      'trigger prefix'
+  CLH_TIMEOUT       int               30                        'seconds to wait for the model'
+  CLH_WARM          bool              1                         'preload the model when a shell starts'
+  CLH_AUTOSTART     bool              1                         'start ollama serve if it is down (local URL only)'
+  CLH_OLLAMA_LOG    str               "$HOME/.ollama/clh-serve.log"  'log file of a server started by clh'
+  CLH_LEARN         bool              1                         'learn from generated commands you run'
+  CLH_HISTORY_FILE  str               "${XDG_DATA_HOME:-$HOME/.local/share}/clh/history.jsonl"  'learned request → command pairs'
+  CLH_HISTORY_MAX   int               500                       'learned pairs to keep'
+  CLH_EXAMPLE_MODE  'all|keyword|embed'  all                    'examples sent: all built-ins + closest learned (fastest), or only the K most similar by words / embeddings'
+  CLH_EXAMPLES_K    int               8                         'examples sent in keyword / embed mode'
+  CLH_EMBED_MODEL   str               nomic-embed-text          'embedding model for embed mode'
+)
+: ${CLH_CONFIG_FILE:=${XDG_CONFIG_HOME:-$HOME/.config}/clh/config.zsh}
+
+# Settings set to a non-default value before the plugin loaded; they beat
+# saved ones. (Restating a default, e.g. in ~/.zshrc, doesn't count.)
+typeset -ga _CLH_PRESET=()
+() {
+  local n t d s
+  local -a keep
+  for n t d s in "${_CLH_SETTINGS[@]}"; do
+    [[ -n ${(P)n} && ${(P)n} != $d ]] && { _CLH_PRESET+=($n); keep+=($n "${(P)n}") }
+  done
+  [[ -r $CLH_CONFIG_FILE ]] && source $CLH_CONFIG_FILE
+  for n s in "${keep[@]}"; do typeset -g $n=$s; done
+  for n t d s in "${_CLH_SETTINGS[@]}"; do
+    [[ -n ${(P)n} ]] || typeset -g $n=$d
+  done
+}
 
 typeset -g _CLH_PENDING=0 _CLH_LAST_STATUS=0
 # Conversation behind the generated command (role/content pairs) and the
@@ -406,6 +429,8 @@ _clh_parse() {
   b=${b%%[[:space:]]#}
   if [[ $b == ${P}fix ]]; then
     reply=(fix)
+  elif [[ $b == ${P}(help|settings) ]]; then
+    reply=(clh ${b#$P})
   elif [[ $b == ${P}\?* ]]; then
     reply=(explain "${${b#${P}\?}##[[:space:]]#}")
   elif [[ $b == *[[:space:]]${P}\? ]]; then
@@ -417,6 +442,257 @@ _clh_parse() {
   else
     reply=(run)
   fi
+}
+
+# --- clh command: help and settings -----------------------------------------
+
+# Look up a setting by name (CLH_MODEL, model, example-mode, ...).
+# Sets reply=(name type default description); fails for unknown names.
+_clh_setting() {
+  emulate -L zsh
+  local want=${(U)${1//-/_}} n t d s
+  [[ $want == CLH_* ]] || want=CLH_$want
+  for n t d s in "${_CLH_SETTINGS[@]}"; do
+    [[ $n == $want ]] && { reply=($n $t "$d" "$s"); return 0 }
+  done
+  return 1
+}
+
+# Print a value normalized for a setting type, or fail if it doesn't fit.
+_clh_check_value() {
+  emulate -L zsh
+  local t=$1 v=$2
+  case $t in
+    bool)
+      case ${(L)v} in
+        (1|on|true|yes)  print 1 ;;
+        (0|off|false|no) print 0 ;;
+        (*) return 1 ;;
+      esac ;;
+    int) [[ $v == <1-> ]] && print -r -- $v ;;
+    str) [[ -n $v && $v != *$'\n'* ]] && print -r -- $v ;;
+    *)   [[ $v == (${~t}) ]] && print -r -- $v ;;
+  esac
+}
+
+_clh_type_hint() {
+  case $1 in
+    bool) print 'on or off' ;;
+    int)  print 'a number' ;;
+    str)  print 'text' ;;
+    *)    print "one of: ${1//|/, }" ;;
+  esac
+}
+
+# Where a setting's current value comes from: zshrc, saved, default or shell.
+_clh_setting_source() {
+  emulate -L zsh
+  if (( ${_CLH_PRESET[(Ie)$1]} )); then
+    print zshrc
+  elif [[ -r $CLH_CONFIG_FILE ]] && grep -q "^$1=" $CLH_CONFIG_FILE; then
+    print saved
+  elif [[ ${(P)1} == "$2" ]]; then
+    print default
+  else
+    print shell
+  fi
+}
+
+# Save NAME=value in the config file, or drop NAME when no value is given.
+_clh_save_setting() {
+  emulate -L zsh
+  local n=$1 f=$CLH_CONFIG_FILE
+  ( umask 077
+    mkdir -p -- ${f:h} || exit 1
+    { print -r -- '# clh settings, written by `clh set` and `clh settings`.'
+      [[ -r $f ]] && grep -v -e "^$n=" -e '^#' $f
+      if (( $# > 1 )); then print -r -- "$n=${(q)2}"; fi
+    } > $f.$$ && mv -f -- $f.$$ $f )
+}
+
+_clh_installed_models() {
+  curl -s --max-time 2 "$CLH_URL/api/tags" 2>/dev/null | jq -r '.models[].name' 2>/dev/null
+}
+
+# Warn about a model that isn't installed (silent if Ollama is down).
+_clh_check_model() {
+  emulate -L zsh
+  local -a models=(${(f)"$(_clh_installed_models)"})
+  (( ${#models} )) || return 0
+  (( ${models[(Ie)$1]} || ${models[(Ie)${1}:latest]} )) ||
+    print -r -- "note: '$1' is not installed; run: ollama pull $1"
+}
+
+_clh_set() {
+  emulate -L zsh
+  local -a reply
+  local n t v
+  _clh_setting "$1" || { print -u2 "clh: unknown setting '$1' (see: clh config)"; return 1 }
+  n=$reply[1] t=$reply[2]
+  v=$(_clh_check_value $t "$2") ||
+    { print -u2 "clh: ${(L)n#CLH_} must be $(_clh_type_hint $t), not '$2'"; return 1 }
+  typeset -g $n=$v
+  _clh_save_setting $n "$v" || { print -u2 "clh: cannot write $CLH_CONFIG_FILE"; return 1 }
+  print -r -- "${(L)n#CLH_} = $v (saved)"
+  (( ${_CLH_PRESET[(Ie)$n]} )) &&
+    print -r -- "note: $n is also set in your shell startup files (e.g. ~/.zshrc), which wins in new shells"
+  case $n in
+    CLH_MODEL) _clh_check_model $CLH_MODEL ;;
+    CLH_EXAMPLE_MODE|CLH_EMBED_MODEL) [[ $CLH_EXAMPLE_MODE == embed ]] && _clh_check_model $CLH_EMBED_MODEL ;;
+    CLH_WARM) print 'takes effect in new shells' ;;
+  esac
+  return 0
+}
+
+_clh_reset_setting() {
+  emulate -L zsh
+  local -a reply
+  local n t d s
+  if [[ $1 == (--all|all) ]]; then
+    rm -f -- $CLH_CONFIG_FILE
+    for n t d s in "${_CLH_SETTINGS[@]}"; do
+      (( ${_CLH_PRESET[(Ie)$n]} )) || typeset -g $n=$d
+    done
+    print 'all settings are back to their defaults'
+    (( ${#_CLH_PRESET} )) && print -r -- "still set in your shell startup files: ${(j:, :)_CLH_PRESET}"
+    return 0
+  fi
+  _clh_setting "$1" || { print -u2 "clh: unknown setting '$1' (see: clh config)"; return 1 }
+  n=$reply[1] d=$reply[3]
+  _clh_save_setting $n || { print -u2 "clh: cannot write $CLH_CONFIG_FILE"; return 1 }
+  if (( ${_CLH_PRESET[(Ie)$n]} )); then
+    print -r -- "$n is set in your shell startup files (e.g. ~/.zshrc); that value stays"
+  else
+    typeset -g $n=$d
+    print -r -- "${(L)n#CLH_} = $d (default)"
+  fi
+}
+
+# List settings with value, source and description. -n numbers them.
+_clh_config() {
+  emulate -L zsh
+  local n t d s i=0 num=
+  for n t d s in "${_CLH_SETTINGS[@]}"; do
+    (( i++ ))
+    [[ $1 == -n ]] && num=$(printf '%2d) ' $i)
+    printf '%s%-14s %s  (%s)\n' "$num" ${(L)n#CLH_} "${${(P)n}/#$HOME/~}" $(_clh_setting_source $n "$d")
+    printf '%s%-14s %s\n' "${num:+    }" '' "$s"
+  done
+}
+
+# Interactive editor: pick a setting by number or name; bools toggle.
+_clh_settings_ui() {
+  emulate -L zsh
+  local -a reply
+  local choice n t v reset
+  while :; do
+    print
+    _clh_config -n
+    print
+    read -r "choice?Setting to change (number or name; r <number> resets; Enter quits): " || return 0
+    [[ -z $choice ]] && return 0
+    reset=0
+    [[ $choice == r\ * ]] && { reset=1; choice=${choice#r } }
+    if [[ $choice == <1-> ]]; then
+      n=${_CLH_SETTINGS[(choice - 1) * 4 + 1]}
+    else
+      n=$choice
+    fi
+    _clh_setting "$n" || { print -r -- "no setting '$choice'"; continue }
+    n=$reply[1] t=$reply[2]
+    print
+    if (( reset )); then
+      _clh_reset_setting $n
+    elif [[ $t == bool ]]; then
+      _clh_set $n $(( ! ${(P)n} ))
+    else
+      print -r -- "$reply[4] ($(_clh_type_hint $t))"
+      [[ $n == CLH_(MODEL|EMBED_MODEL) ]] &&
+        print -r -- "installed: ${(j:, :)${(f)"$(_clh_installed_models)"}:-unknown (is Ollama running?)}"
+      v=
+      vared -p "${(L)n#CLH_} [${${(P)n}/#$HOME/~}] (Enter keeps it)> " v || continue
+      [[ -z $v || $v == ${(P)n} ]] || _clh_set $n "$v"
+    fi
+  done
+}
+
+_clh_history() {
+  emulate -L zsh
+  [[ -s $CLH_HISTORY_FILE ]] || { print 'nothing learned yet'; return 0 }
+  jq -r '"\(.r)\t→ \(.c)"' $CLH_HISTORY_FILE | tail -n ${1:-20} | column -t -s $'\t'
+}
+
+# Forget every learned pair, or those whose request or command contains text.
+_clh_forget() {
+  emulate -L zsh
+  local f=$CLH_HISTORY_FILE before after
+  [[ -s $f ]] || { print 'nothing learned yet'; return 0 }
+  before=$(wc -l < $f)
+  if [[ -z $1 ]]; then
+    read -q "?Forget all ${before// /} learned commands? [y/N] " || { print; return 1 }
+    print
+    rm -f -- $f ${f:h}/embed-cache.jsonl
+    print 'forgot everything'
+    return 0
+  fi
+  ( umask 077
+    jq -c --arg s "${(L)1}" 'select((.r + " " + .c) | ascii_downcase | contains($s) | not)' $f > $f.$$ &&
+      mv -f -- $f.$$ $f ) || return 1
+  after=$(wc -l < $f)
+  print -r -- "forgot $(( before - after )) of ${before// /}"
+}
+
+_clh_help() {
+  emulate -L zsh
+  local P=$CLH_PREFIX n t d s
+  print -r -- "clh — plain English → shell commands  (model: $CLH_MODEL)
+
+On the command line, then Enter:"
+  printf '  %-24s %s\n' \
+    "$P <request>"           "generate a command, e.g.  $P find files over 100MB" \
+    "<command> $P <change>"  "revise it, e.g.  find . -size +1M $P only python files" \
+    "<command> ${P}?"        "explain without running (or: ${P}? <command>)" \
+    "${P}fix"                "fix the last command you ran" \
+    "${P}help  ${P}settings" "this page / change settings"
+  print -r -- "
+With a generated command on the line:
+  Enter  run it       Tab  clear it       Ctrl-N  another suggestion
+  Red means potentially destructive. Nothing runs until you press Enter.
+  Commands you run are learned and reused as examples (clh history).
+
+Commands:
+  clh help                 this page
+  clh config               all settings, where each value comes from
+  clh settings             change settings interactively
+  clh set <name> <value>   change and save a setting    clh set model qwen3.5:4b
+  clh reset <name>|--all   back to the default
+  clh history [N]          the last N learned commands (default 20)
+  clh forget [text]        forget all learned commands, or those containing text
+
+Settings (saved in ${CLH_CONFIG_FILE/#$HOME/~}):"
+  for n t d s in "${_CLH_SETTINGS[@]}"; do
+    printf '  %-14s %s\n' ${(L)n#CLH_} "${${(P)n}/#$HOME/~}"
+  done
+}
+
+clh() {
+  emulate -L zsh
+  local cmd=${1:-help}
+  (( $# )) && shift
+  case $cmd in
+    help|-h|--help) _clh_help ;;
+    config)         _clh_config ;;
+    settings)       _clh_settings_ui ;;
+    set)
+      (( $# >= 2 )) || { print -u2 'usage: clh set <name> <value>   (names: clh config)'; return 1 }
+      _clh_set "$1" "${(j: :)@[2,-1]}" ;;
+    reset)
+      (( $# )) || { print -u2 'usage: clh reset <name>|--all'; return 1 }
+      _clh_reset_setting "$1" ;;
+    history)        _clh_history "$@" ;;
+    forget)         _clh_forget "$*" ;;
+    *) print -u2 "clh: unknown command '$cmd' (try: clh help)"; return 1 ;;
+  esac
 }
 
 # --- ZLE widgets ------------------------------------------------------------
@@ -510,6 +786,11 @@ Request: run this command" assistant "$reply[2]")
       _CLH_SEEN=("$last")
       _CLH_REQUEST=
       _clh_run 0 "$last" user "$(_clh_fix_msg "$last" $_CLH_LAST_STATUS)"
+      ;;
+    clh)
+      BUFFER="clh $reply[2]"
+      _clh_reset
+      zle .accept-line
       ;;
     explain)
       [[ -z $reply[2] ]] && { zle -M "usage: <command> ${CLH_PREFIX}?  or  ${CLH_PREFIX}? <command>"; return }
