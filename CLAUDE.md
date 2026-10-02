@@ -4,7 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A zsh plugin (`clh.zsh`, sourced from `~/.zshrc`) that turns plain-English requests into shell commands using a local Ollama model. Runtime deps: `curl`, `jq`, `ollama`. There is no build step. `install.sh` checks the dependencies, pulls the model and appends the `source` line to `~/.zshrc`.
+A shell plugin that turns plain-English requests into shell commands using a local Ollama model. Runtime deps: `curl`, `jq`, `ollama`. There is no build step. It comes in self-contained versions, one file per shell:
+
+- `clh.zsh`: zsh on macOS, the reference version. `install.sh` checks the dependencies, pulls the model and appends the `source` line to `~/.zshrc`.
+- `clh.bash`: bash 4+ on Linux, WSL and Git Bash. A function-by-function port with the same names, so the two files read side by side. `install-bash.sh` installs it into `~/.bashrc`.
+
+A change to behavior in one version usually belongs in the others too.
 
 ## Commands
 
@@ -13,7 +18,11 @@ zsh tests/test_sanitize.zsh            # unit tests, no model needed; exits 1 on
 ./tests/eval.sh                        # sends sample requests to the real model (needs Ollama running)
 zsh tests/bench_examples.zsh -v        # scores CLH_EXAMPLE_MODE all/keyword/embed with accept patterns
 CLH_MODEL=qwen3.5:4b ./tests/eval.sh   # compare another model
+tests/run_containers.sh                # test_bash.sh in a Debian bash 5 container + test_sync.zsh
+tests/run_containers.sh --eval         # also eval_bash.sh against the host's Ollama (host.docker.internal)
 ```
+
+macOS ships bash 3.2, so `clh.bash` is tested in Docker/OrbStack (`tests/docker/bash.Dockerfile`). `tests/test_sync.zsh` compares `_clh_dump_data` output across versions: setting names/types/non-path defaults, and the request and fix examples between zsh and bash. System prompts differ per platform on purpose and are not compared.
 
 There's no test runner and no way to filter tests. To run one case, source the plugin and call the function directly:
 
@@ -46,7 +55,9 @@ zsh -c 'source ./clh.zsh; local -a reply; _clh_parse "git log :: last 5"; print 
 
 **Explain** uses its own system prompt and few-shots (`_CLH_EXPLAIN_SYSTEM`, `_CLH_EXPLAIN_EXAMPLES`). The ⚠ marker is not decided by the model. It comes from matching against `_CLH_DANGER_RE`, the same regex that colors destructive generated commands red.
 
-**Ollama autostart.** `_clh_ensure_server` → `_clh_start_server` runs `ollama serve` only when `CLH_URL` is localhost/127.0.0.1/0.0.0.0. It detaches through `perl POSIX::setsid` so that Ctrl-C or closing the terminal doesn't kill the server, then polls `/api/version` for up to 60s. When a shell starts, a background `curl` warms the model (`CLH_WARM`).
+**bash port specifics (`clh.bash`).** Readline can't make a `bind -x` handler decide whether the line is accepted, so Enter is a macro, `"\C-x}1\C-x}2"`. `\C-x}1` runs `_clh_accept_line`, which edits `READLINE_LINE` and rebinds `\C-x}2` to `accept-line` (run) or `redraw-current-line` (stay on the line). Tab and Ctrl-N are bound to their macros (`\C-x}3…4`, `\C-x}5…6`) only while a command is pending (`_clh_grab_keys`), then restored to the bindings recorded at load (`_CLH_ORIG_TAB/NEXT`). Routing them through a macro all the time would break readline's double-Tab detection. Bindings cover the emacs and vi-insert keymaps (Enter also covers vi-command). There is no `zle -M` and no buffer coloring: `_clh_status` (transient, `\r\e[K`) and `_clh_msg` (a line above the prompt) replace them. `_clh_precmd` is forced to the front of `PROMPT_COMMAND` (string or array), returns the saved `$?`, and also resets pending state, which stands in for zsh's `line-init`. `::fix` reads the last command with `history 1`, not `fc -ln -1`, because inside `bind -x` the latter skips the newest entry. `_CLH_OS` (linux/macos/gitbash) selects the platform rules in `_CLH_SYSTEM` and the install hints.
+
+**Ollama autostart.** `_clh_ensure_server` → `_clh_start_server` runs `ollama serve` only when `CLH_URL` is localhost/127.0.0.1/0.0.0.0. It detaches through `perl POSIX::setsid` (bash: `setsid -f`, else `nohup`) so that Ctrl-C or closing the terminal doesn't kill the server, then polls `/api/version` for up to 60s. When a shell starts, a background `curl` warms the model (`CLH_WARM`).
 
 ## Conventions
 
