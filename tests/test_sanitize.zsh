@@ -1,8 +1,10 @@
 #!/usr/bin/env zsh
 # Unit tests for the deterministic parts of clh.zsh (no model needed).
-# Ignore the user's environment and saved settings.
+# Ignore the user's environment and saved settings, and keep every default
+# path (history, config) inside a temp dir instead of the real home.
 unset -m 'CLH_*'
 tmpdir=$(mktemp -d); trap 'rm -rf $tmpdir' EXIT
+export HOME=$tmpdir/home XDG_DATA_HOME=$tmpdir/home/.local/share XDG_CONFIG_HOME=$tmpdir/home/.config
 CLH_CONFIG_FILE=$tmpdir/config/config.zsh
 plugin=${0:A:h:h}/clh.zsh
 source $plugin
@@ -148,6 +150,8 @@ check "$CLH_MODEL|$(grep -c '^CLH_MODEL=' $CLH_CONFIG_FILE)"  'qwen2.5-coder:1.5
 clh reset --all >/dev/null
 check "$CLH_LEARN|$([[ -e $CLH_CONFIG_FILE ]] && print kept || print gone)"  '1|gone'  reset-all
 
+CLH_HISTORY_FILE=$tmpdir/clh/history.jsonl   # reset --all restored the default
+rm -f $CLH_HISTORY_FILE
 _clh_learn 'list pods' 'kubectl get pods'
 check "$(clh history 1)"               'list pods  → kubectl get pods'  history-shows-pairs
 _clh_learn 'list nodes' 'kubectl get nodes'
