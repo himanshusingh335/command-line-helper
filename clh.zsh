@@ -36,8 +36,14 @@ Rules:
 - Use the context (directory, files, git branch, conda env) when it helps; use placeholders like <name> only when the value is truly unknown.'
 
 typeset -g _CLH_EXPLAIN_SYSTEM='You explain shell commands for zsh on macOS.
-Reply with ONE short plain sentence (at most 20 words) saying what the command does. No markdown.
-If it deletes or overwrites data, force-pushes or kills processes, start with "Destructive:".'
+Reply with ONE short plain sentence (at most 20 words) saying exactly what the command does. No markdown.'
+
+typeset -ga _CLH_EXPLAIN_EXAMPLES=(
+  user 'docker ps -a'                     assistant 'Lists all Docker containers, including stopped ones.'
+  user 'git stash pop'                    assistant 'Re-applies your most recently stashed changes and removes them from the stash.'
+  user 'find . -name "*.log" -delete'     assistant 'Deletes every .log file in this folder and its subfolders.'
+  user 'lsof -i :8080'                    assistant 'Shows which process is listening on port 8080.'
+)
 
 # Few-shot examples: alternating request / command.
 typeset -ga _CLH_EXAMPLES=(
@@ -220,7 +226,7 @@ _clh_generate() {
 _clh_explain() {
   emulate -L zsh
   local out
-  out=$(_clh_chat "$_CLH_EXPLAIN_SYSTEM" 0 80 "$(_clh_turns user "$1")") || return 1
+  out=$(_clh_chat "$_CLH_EXPLAIN_SYSTEM" 0 80 "$(_clh_turns "${_CLH_EXPLAIN_EXAMPLES[@]}" user "$1")") || return 1
   out=${out//$'\n'/ }
   print -r -- "${${out##[[:space:]]##}//\`/}"
 }
@@ -326,7 +332,11 @@ Request: run this command" assistant "$reply[2]")
       zle -M "⏳ explaining…"
       zle -R
       out=$(_clh_explain "$cmd" 2>&1) || { zle -M "$out"; return }
-      zle -M "💡 $out"
+      if [[ $cmd =~ $_CLH_DANGER_RE ]]; then
+        zle -M "⚠  $out"
+      else
+        zle -M "💡 $out"
+      fi
       ;;
   esac
 }
