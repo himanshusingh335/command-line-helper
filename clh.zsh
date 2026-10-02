@@ -17,11 +17,21 @@
 : ${CLH_WARM:=1}
 : ${CLH_AUTOSTART:=1}
 : ${CLH_OLLAMA_LOG:=$HOME/.ollama/clh-serve.log}
+: ${CLH_LEARN:=1}
+: ${CLH_HISTORY_FILE:=${XDG_DATA_HOME:-$HOME/.local/share}/clh/history.jsonl}
+: ${CLH_HISTORY_MAX:=500}
+: ${CLH_EXAMPLE_MODE:=all}
+: ${CLH_EXAMPLES_K:=8}
+: ${CLH_EMBED_MODEL:=nomic-embed-text}
 
 typeset -g _CLH_PENDING=0 _CLH_LAST_STATUS=0
 # Conversation behind the generated command (role/content pairs) and the
 # commands already suggested for it; both live only while it is pending.
 typeset -ga _CLH_TURNS=() _CLH_SEEN=()
+# The request behind the pending command, and the request / command pair
+# waiting for its exit status before it is learned.
+typeset -g _CLH_REQUEST=
+typeset -ga _CLH_LEARN_PAIR=()
 
 # Commands that deserve an extra look before running.
 typeset -g _CLH_DANGER_RE='(^|[;&| ])(sudo|rm -[a-zA-Z]*[rf]|dd |mkfs|shred|diskutil (erase|partition)|chmod -R 777|kill -9 -1)|> ?/dev/|git (push.*(-f|--force)|reset --hard|clean -[a-z]*f)|docker (system|volume|image) prune|conda (env )?remove'
@@ -76,7 +86,11 @@ typeset -ga _CLH_EXAMPLES=(
   'find files bigger than 100MB'                           'find . -type f -size +100M'
   'what is using port 8080'                                'lsof -i :8080'
   'kill whatever is running on port 5000'                  'kill $(lsof -ti :5000)'
-  # fix examples (same wording as _clh_fix_msg)
+)
+
+# Fix examples (same wording as _clh_fix_msg), used for ::fix.
+typeset -g _CLH_FIX_TAIL='Output only the corrected command.'
+typeset -ga _CLH_FIX_EXAMPLES=(
   $'This command failed with exit code 127: \'dokcer\' is not a known command (probably misspelled):\ndokcer ps -a\nOutput only the corrected command.'      'docker ps -a'
   $'This command failed with exit code 127: \'pyhton\' is not a known command (probably misspelled):\npyhton main.py\nOutput only the corrected command.'    'python3 main.py'
   $'This command failed with exit code 1 (likely wrong flags or arguments):\ngit comit -m "init"\nOutput only the corrected command.'                          'git commit -m "init"'
@@ -174,20 +188,139 @@ _clh_chat() {
 }
 
 # Print a command for a conversation (few-shots are prepended).
-#   _clh_complete <temperature> <role> <content> [<role> <content> ...]
+#   _clh_complete <temperature> <query> <role> <content> [<role> <content> ...]
+# <query> is the plain request (or command) used to pick similar examples.
 _clh_complete() {
   emulate -L zsh
-  local temp=$1; shift
-  local msgs content
-  msgs=$(jq -nc --argjson a "$(_clh_example_turns)" --argjson b "$(_clh_turns "$@")" '$a + $b')
+  local temp=$1 query=$2; shift 2
+  local msgs content fix=0
+  [[ ${@[-1]} == *"$_CLH_FIX_TAIL"* ]] && fix=1
+  msgs=$(jq -nc --argjson a "$(_clh_select_examples "$query" $fix)" --argjson b "$(_clh_turns "$@")" '$a + $b')
   content=$(_clh_chat "$_CLH_SYSTEM" $temp 120 "$msgs") || return 1
   _clh_sanitize "$content" || { print -u2 "clh: model returned no command"; return 1 }
 }
 
-_clh_example_turns() {
+# Alternating request / command arguments → user / assistant turns.
+_clh_pair_turns() {
   jq -nc '[$ARGS.positional as $e | range(0; $e | length; 2) as $i
            | {role: "user", content: $e[$i]}, {role: "assistant", content: $e[$i + 1]}]' \
+    --args "$@"
+}
+
+# --- learned and similar examples -------------------------------------------
+
+# jq helpers. Pool items are {r: request, c: command, l: learned, t: time};
+# rankers add a similarity score s.
+typeset -g _CLH_JQ_LIB='
+def stop: ["a","an","the","in","of","to","for","on","with","and","or","me","my",
+           "i","it","is","all","this","that","from","by","please","can","you","how","do","what"];
+def toks: [ascii_downcase | scan("[a-z0-9]+") | select(IN(stop[]) | not)
+           | if length > 3 and endswith("s") and (endswith("ss") | not) then .[:-1] else . end]
+          | unique;
+def keyword($q):
+  length as $n | map(.r | toks) as $pt | ($q | toks) as $qt
+  | (reduce $pt[][] as $w ({}; .[$w] += 1)) as $df
+  | [range($n) as $i | .[$i] + {s: (([$pt[$i][] | select(IN($qt[])) | ($n + 1) / $df[.] | log] | add // 0)
+                                    / ([$pt[$i] | length, 1] | max | sqrt))}];
+def cos($a; $b): ([range($a | length) as $i | $a[$i] * $b[$i]] | add)
+                 / ((([$a[] | . * .] | add) * ([$b[] | . * .] | add)) | sqrt);
+# The $k best matches, closest last; unmatched slots go to the first built-ins.
+def pick($k):
+  ([.[] | select(.s > 0)] | sort_by([-.s, (if .l then 0 else 1 end), -(.t // 0)]) | .[:$k]) as $top
+  | ([.[] | select(.s <= 0 and (.l | not))] | .[:($k - ($top | length))]) + ($top | reverse);
+def turns: [.[] | {role: "user", content: .r}, {role: "assistant", content: .c}];
+'
+
+# Remember a request and the command the user ran for it.
+_clh_learn() {
+  emulate -L zsh
+  zmodload zsh/datetime
+  local req=$1 cmd=$2 f=$CLH_HISTORY_FILE tmp
+  (( CLH_LEARN )) || return 0
+  [[ -n $req && -n $cmd && $cmd != *$'\n'* ]] || return 0
+  [[ $cmd =~ $_CLH_DANGER_RE ]] && return 0
+  ( umask 077
+    mkdir -p -- ${f:h} &&
+    jq -nc --arg r "$req" --arg c "$cmd" --argjson t $EPOCHSECONDS '{r: $r, c: $c, t: $t}' >> $f ) || return 1
+  if (( $(wc -l < $f) > CLH_HISTORY_MAX )); then
+    tmp=$f.$$
+    jq -c -s --argjson max $CLH_HISTORY_MAX \
+      'group_by(.r | ascii_downcase) | map(max_by(.t)) | sort_by(.t) | .[-$max:][]' $f > $tmp &&
+      mv -f -- $tmp $f
+  fi
+}
+
+# Learned pairs (newest per request) followed by the built-in examples.
+_clh_pool() {
+  emulate -L zsh
+  local learned='[]'
+  if [[ -r $CLH_HISTORY_FILE ]]; then
+    learned=$(jq -c -s 'map(select(.r and .c)) | group_by(.r | ascii_downcase)
+                        | map(max_by(.t) | {r, c, t, l: true})' $CLH_HISTORY_FILE 2>/dev/null) || learned='[]'
+  fi
+  jq -nc --argjson l "$learned" \
+    '($l | map(.r | ascii_downcase)) as $seen
+     | $l + [$ARGS.positional as $e | range(0; $e | length; 2) as $i
+             | {r: $e[$i], c: $e[$i + 1]} | select(.r | ascii_downcase | IN($seen[]) | not)]' \
     --args "${_CLH_EXAMPLES[@]}"
+}
+
+_clh_rank_keyword() {
+  jq -c --arg q "$1" "$_CLH_JQ_LIB"' keyword($q)' <<<"$2"
+}
+
+# Embed texts with $CLH_EMBED_MODEL; prints a JSON array of vectors.
+_clh_embed() {
+  emulate -L zsh
+  local payload resp
+  payload=$(jq -nc --arg m "$CLH_EMBED_MODEL" '{model: $m, input: $ARGS.positional, keep_alive: "30m"}' --args "$@")
+  resp=$(curl -sS --max-time $CLH_TIMEOUT "$CLH_URL/api/embed" -d "$payload" 2>/dev/null) || return 1
+  jq -ce '.embeddings | select(type == "array" and length > 0)' <<<"$resp" 2>/dev/null
+}
+
+# Score the pool by cosine similarity. Example vectors are cached next to
+# the history file, so usually only the query is embedded.
+_clh_rank_embed() {
+  emulate -L zsh
+  local q=$1 pool=$2 cache=${CLH_HISTORY_FILE:h}/embed-cache.jsonl vecs
+  local -a missing
+  missing=(${(f)"$(jq -r --arg m "$CLH_EMBED_MODEL" --slurpfile c <([[ -r $cache ]] && cat $cache) \
+    '[$c[] | select(.m == $m) | .t] as $have | [.[].r] | unique[] | select(IN($have[]) | not)' <<<"$pool")"})
+  vecs=$(_clh_embed "$q" "${missing[@]}") || return 1
+  if (( ${#missing} )); then
+    ( umask 077; mkdir -p -- ${cache:h} &&
+      jq -c --arg m "$CLH_EMBED_MODEL" '.[1:] as $v | $ARGS.positional | to_entries[] | {m: $m, t: .value, e: $v[.key]}' \
+        --args "${missing[@]}" <<<"$vecs" >> $cache ) || return 1
+  fi
+  jq -c --arg m "$CLH_EMBED_MODEL" --argjson pool "$pool" --slurpfile c $cache "$_CLH_JQ_LIB"'
+    ($c | map(select(.m == $m) | {key: .t, value: .e}) | from_entries) as $E | .[0] as $qv
+    | $pool | map(. + {s: (if $E[.r] then cos($E[.r]; $qv) else 0 end)})' <<<"$vecs"
+}
+
+# Few-shot turns for a query. CLH_EXAMPLE_MODE:
+#   all      every built-in example plus the 3 closest learned pairs
+#   keyword  the CLH_EXAMPLES_K most similar examples by shared words
+#   embed    the same by embedding similarity (falls back to keyword)
+# Fix examples are added for ::fix (always in "all" mode).
+#   _clh_select_examples <query> [<fix:0|1>]
+_clh_select_examples() {
+  emulate -L zsh
+  local q=$1 fix=${2:-0} pool scored fixes='[]'
+  pool=$(_clh_pool) || return 1
+  if (( fix )) || [[ $CLH_EXAMPLE_MODE != (keyword|embed) ]]; then
+    fixes=$(_clh_pair_turns "${_CLH_FIX_EXAMPLES[@]}")
+  fi
+  case $CLH_EXAMPLE_MODE in
+    embed)   scored=$(_clh_rank_embed "$q" "$pool") || scored=$(_clh_rank_keyword "$q" "$pool") ;;
+    keyword) scored=$(_clh_rank_keyword "$q" "$pool") ;;
+    *)
+      jq -c --argjson f "$fixes" "$_CLH_JQ_LIB"'
+        (map(select(.l | not)) | turns) + $f + (map(select(.l)) | pick(3) | turns)' \
+        <<<"$(_clh_rank_keyword "$q" "$pool")"
+      return
+      ;;
+  esac
+  jq -c --argjson k $CLH_EXAMPLES_K --argjson f "$fixes" "$_CLH_JQ_LIB"' (pick($k) | turns) + $f' <<<"$scored"
 }
 
 # User messages for each kind of request.
@@ -216,7 +349,7 @@ _clh_fix_msg() {
 
 $why:
 $cmd
-Output only the corrected command."
+$_CLH_FIX_TAIL"
 }
 
 # --- Ollama server ----------------------------------------------------------
@@ -252,7 +385,7 @@ _clh_start_server() {
 
 # Print the generated command for a natural-language query.
 _clh_generate() {
-  _clh_complete 0 user "$(_clh_request_msg "$1")"
+  _clh_complete 0 "$1" user "$(_clh_request_msg "$1")"
 }
 
 # Print a one-sentence explanation of a command.
@@ -294,6 +427,7 @@ _clh_reset() {
   _CLH_PENDING=0
   _CLH_TURNS=()
   _CLH_SEEN=()
+  _CLH_REQUEST=
   region_highlight=()
 }
 
@@ -325,14 +459,15 @@ _clh_ensure_server() {
 }
 
 # Generate from a conversation; on success show the command and keep the
-# conversation for refine / Ctrl-N.  _clh_run <temperature> <role> <content> ...
+# conversation for refine / Ctrl-N.
+#   _clh_run <temperature> <query> <role> <content> ...
 _clh_run() {
-  local temp=$1 cmd; shift
+  local temp=$1 query=$2 cmd; shift 2
   _clh_ensure_server || return 1
   zle -M "⏳ thinking ($CLH_MODEL)…"
   zle -R
   # On success only the command is printed; on failure only the error.
-  cmd=$(_clh_complete $temp "$@" 2>&1) || { zle -M "$cmd"; return 1 }
+  cmd=$(_clh_complete $temp "$query" "$@" 2>&1) || { zle -M "$cmd"; return 1 }
   _CLH_TURNS=("$@" assistant "$cmd")
   _CLH_SEEN+=("$cmd")
   _clh_show "$cmd"
@@ -345,31 +480,36 @@ _clh_accept_line() {
 
   case $reply[1] in
     run)
+      # Learn the request with the command as run (edits included) if it succeeds.
+      (( _CLH_PENDING )) && [[ -n $_CLH_REQUEST ]] && _CLH_LEARN_PAIR=("$_CLH_REQUEST" "$BUFFER")
       _clh_reset
       zle .accept-line
       ;;
     new)
       [[ -z $reply[2] ]] && { zle -M "usage: $CLH_PREFIX <describe the command you want>"; return }
       _CLH_SEEN=()
-      _clh_run 0 user "$(_clh_request_msg "$reply[2]")"
+      _CLH_REQUEST=$reply[2]
+      _clh_run 0 "$reply[2]" user "$(_clh_request_msg "$reply[2]")"
       ;;
     refine)
       local -a turns
       if (( _CLH_PENDING )) && (( ${#_CLH_TURNS} )); then
         turns=("${(@)_CLH_TURNS[1,-2]}" "$reply[2]")   # respect manual edits
       else
+        _CLH_REQUEST=
         turns=(user "$(_clh_context)
 
 Request: run this command" assistant "$reply[2]")
       fi
       _CLH_SEEN=()
-      _clh_run 0 "${turns[@]}" user "$(_clh_refine_msg "$reply[3]")"
+      _clh_run 0 "${_CLH_REQUEST:-$reply[2]}" "${turns[@]}" user "$(_clh_refine_msg "$reply[3]")"
       ;;
     fix)
       local last=${$(fc -ln -1 2>/dev/null)##[[:space:]]#}
       [[ -z $last ]] && { zle -M "clh: no previous command to fix"; return }
       _CLH_SEEN=("$last")
-      _clh_run 0 user "$(_clh_fix_msg "$last" $_CLH_LAST_STATUS)"
+      _CLH_REQUEST=
+      _clh_run 0 "$last" user "$(_clh_fix_msg "$last" $_CLH_LAST_STATUS)"
       ;;
     explain)
       [[ -z $reply[2] ]] && { zle -M "usage: <command> ${CLH_PREFIX}?  or  ${CLH_PREFIX}? <command>"; return }
@@ -415,7 +555,7 @@ _clh_next() {
     ask[-1]+=$'\n'"Give a different command than: ${(j: | :)_CLH_SEEN}"
     zle -M "⏳ another suggestion…"
     zle -R
-    cmd=$(_clh_complete 0.8 "${ask[@]}" 2>&1) || { zle -M "$cmd"; return }
+    cmd=$(_clh_complete 0.8 "${_CLH_REQUEST:-$BUFFER}" "${ask[@]}" 2>&1) || { zle -M "$cmd"; return }
     (( ${_CLH_SEEN[(Ie)$cmd]} )) || break
   done
   if (( ${_CLH_SEEN[(Ie)$cmd]} )); then
@@ -433,6 +573,10 @@ _clh_line_init() {
 
 _clh_precmd() {
   _CLH_LAST_STATUS=$?
+  if (( ${#_CLH_LEARN_PAIR} )); then
+    (( _CLH_LAST_STATUS == 0 )) && _clh_learn "${_CLH_LEARN_PAIR[@]}"
+    _CLH_LEARN_PAIR=()
+  fi
 }
 
 if [[ -o interactive ]]; then
