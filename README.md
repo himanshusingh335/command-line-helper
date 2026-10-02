@@ -18,14 +18,24 @@ source ~/.zshrc
 
 Requires `ollama serve` to be running.
 
-## Keys
+## Usage
+
+| You type | Enter does |
+|---|---|
+| `:: <request>` | generate a command and put it on the line |
+| `<command> :: <change>` | revise the command, e.g. `find . -size +1M :: only python files`. Works on generated or typed commands, and can be repeated |
+| `<command> ::?` or `::? <command>` | explain it in one sentence without running it, with ⚠ for destructive commands. The command stays on the line |
+| `::fix` | correct the last command you ran, using its exit code (typos, wrong flags, command not found) |
+| anything else | runs normally |
 
 | Key | When | Action |
 |-----|------|--------|
-| Enter | line starts with `::` | generate the command and put it on the line |
 | Enter | generated command shown | run it (it goes into history as the real command) |
 | Tab | generated command shown | clear it |
-| Tab | otherwise | normal completion |
+| Ctrl-N | generated command shown | another suggestion for the same request |
+| Tab / Ctrl-N | otherwise | normal completion / history |
+
+`::fix` only sees the command and its exit code, not its error output, because capturing that would mean re-running it.
 
 The generated command is shown in cyan. Potentially destructive commands are shown in **red** with a warning: `rm -rf`, `sudo`, force push, `reset --hard`, prune and similar. Nothing runs without your Enter.
 
