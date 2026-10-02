@@ -1,8 +1,12 @@
 # clh.zsh — natural-language → shell command helper for zsh, powered by Ollama.
 #
-#   :: <what you want>   then Enter  → the generated command replaces the line
-#   Enter again                      → run it
-#   Tab                              → discard it
+#   :: <what you want>     Enter → the generated command replaces the line
+#   Enter again                   → run it
+#   Tab                           → discard it
+#   Ctrl-N                        → another suggestion for the same request
+#   <cmd> :: <change>       Enter → revise the command on the line
+#   <cmd> ::?  or  ::? <cmd> Enter → explain a command without running it
+#   ::fix                   Enter → correct the last command you ran
 #
 # Source this file from ~/.zshrc. Requires curl, jq and a running Ollama server.
 
@@ -12,7 +16,10 @@
 : ${CLH_TIMEOUT:=30}
 : ${CLH_WARM:=1}
 
-typeset -g _CLH_PENDING=0
+typeset -g _CLH_PENDING=0 _CLH_LAST_STATUS=0
+# Conversation behind the generated command (role/content pairs) and the
+# commands already suggested for it; both live only while it is pending.
+typeset -ga _CLH_TURNS=() _CLH_SEEN=()
 
 # Commands that deserve an extra look before running.
 typeset -g _CLH_DANGER_RE='(^|[;&| ])(sudo|rm -[a-zA-Z]*[rf]|dd |mkfs|shred|diskutil (erase|partition)|chmod -R 777|kill -9 -1)|> ?/dev/|git (push.*(-f|--force)|reset --hard|clean -[a-z]*f)|docker (system|volume|image) prune|conda (env )?remove'
@@ -27,6 +34,10 @@ Rules:
 - conda env "here" / "in this folder" / "local" / "-p" means a prefix env: conda create -p ./.conda ..., activated with conda activate ./.conda.
 - Do exactly what was asked: never add destructive or extra flags (like --hard, -a, -f, file filters) the user did not ask for.
 - Use the context (directory, files, git branch, conda env) when it helps; use placeholders like <name> only when the value is truly unknown.'
+
+typeset -g _CLH_EXPLAIN_SYSTEM='You explain shell commands for zsh on macOS.
+Reply with ONE short plain sentence (at most 20 words) saying what the command does. No markdown.
+If it deletes or overwrites data, force-pushes or kills processes, start with "Destructive:".'
 
 # Few-shot examples: alternating request / command.
 typeset -ga _CLH_EXAMPLES=(
@@ -57,6 +68,11 @@ typeset -ga _CLH_EXAMPLES=(
   'find files bigger than 100MB'                           'find . -type f -size +100M'
   'what is using port 8080'                                'lsof -i :8080'
   'kill whatever is running on port 5000'                  'kill $(lsof -ti :5000)'
+  # fix examples (same wording as _clh_fix_msg)
+  $'This command failed with exit code 127: \'dokcer\' is not a known command (probably misspelled):\ndokcer ps -a\nOutput only the corrected command.'      'docker ps -a'
+  $'This command failed with exit code 127: \'pyhton\' is not a known command (probably misspelled):\npyhton main.py\nOutput only the corrected command.'    'python3 main.py'
+  $'This command failed with exit code 1 (likely wrong flags or arguments):\ngit comit -m "init"\nOutput only the corrected command.'                          'git commit -m "init"'
+  $'This command failed with exit code 1 (likely wrong flags or arguments):\ndu -sh --max-depth=1\nOutput only the corrected command.'                           'du -h -d 1'
 )
 
 # --- core -------------------------------------------------------------------
@@ -113,26 +129,26 @@ _clh_hints() {
   fi
 }
 
-# Print the generated command for a natural-language query.
+# Build a messages array from alternating role / content arguments.
+_clh_turns() {
+  jq -nc '[$ARGS.positional as $e | range(0; $e | length; 2) as $i
+           | {role: $e[$i], content: $e[$i + 1]}]' --args "$@"
+}
+
+# Send one chat request and print the raw reply.
+#   _clh_chat <system> <temperature> <num_predict> <messages-json>
 # Returns non-zero and prints an error on stderr on failure.
-_clh_generate() {
+_clh_chat() {
   emulate -L zsh
-  local query=$1 payload response err content
+  local sys=$1 temp=$2 npred=$3 msgs=$4 payload response err
 
   payload=$(jq -nc \
-    --arg model "$CLH_MODEL" \
-    --arg sys "$_CLH_SYSTEM" \
-    --arg q "$(_clh_context)
-
-Request: $query
-$(_clh_hints "$query")" \
+    --arg model "$CLH_MODEL" --arg sys "$sys" \
+    --argjson temp $temp --argjson npred $npred --argjson msgs "$msgs" \
     '{model: $model, stream: false, think: false, keep_alive: "30m",
-      options: {temperature: 0, num_predict: 120},
-      messages: ([{role: "system", content: $sys}]
-        + [$ARGS.positional as $e | range(0; $e | length; 2) as $i
-           | {role: "user", content: $e[$i]}, {role: "assistant", content: $e[$i + 1]}]
-        + [{role: "user", content: $q}])}' \
-    --args "${_CLH_EXAMPLES[@]}") || { print -u2 "clh: failed to build request (jq)"; return 1 }
+      options: {temperature: $temp, num_predict: $npred},
+      messages: ([{role: "system", content: $sys}] + $msgs)}') \
+    || { print -u2 "clh: failed to build request (jq)"; return 1 }
 
   response=$(curl -sS --max-time $CLH_TIMEOUT "$CLH_URL/api/chat" -d "$payload" 2>&1) || {
     print -u2 "clh: cannot reach Ollama at $CLH_URL — is 'ollama serve' running?"
@@ -146,51 +162,173 @@ $(_clh_hints "$query")" \
     return 1
   fi
 
-  content=$(jq -r '.message.content // empty' <<<"$response" 2>/dev/null)
+  jq -r '.message.content // empty' <<<"$response" 2>/dev/null
+}
+
+# Print a command for a conversation (few-shots are prepended).
+#   _clh_complete <temperature> <role> <content> [<role> <content> ...]
+_clh_complete() {
+  emulate -L zsh
+  local temp=$1; shift
+  local msgs content
+  msgs=$(jq -nc --argjson a "$(_clh_example_turns)" --argjson b "$(_clh_turns "$@")" '$a + $b')
+  content=$(_clh_chat "$_CLH_SYSTEM" $temp 120 "$msgs") || return 1
   _clh_sanitize "$content" || { print -u2 "clh: model returned no command"; return 1 }
+}
+
+_clh_example_turns() {
+  jq -nc '[$ARGS.positional as $e | range(0; $e | length; 2) as $i
+           | {role: "user", content: $e[$i]}, {role: "assistant", content: $e[$i + 1]}]' \
+    --args "${_CLH_EXAMPLES[@]}"
+}
+
+# User messages for each kind of request.
+_clh_request_msg() {
+  print -r -- "$(_clh_context)
+
+Request: $1
+$(_clh_hints "$1")"
+}
+
+_clh_refine_msg() {
+  print -r -- "Revise the command: $1. Output the full revised command only."
+}
+
+_clh_fix_msg() {
+  emulate -L zsh
+  local cmd=$1 st=$2 first=${${(z)1}[1]} why
+  if (( st == 0 )); then
+    why="This command ran but did not do what the user wanted"
+  elif (( st == 127 )) || ! whence -- "$first" >/dev/null; then
+    why="This command failed with exit code $st: '$first' is not a known command (probably misspelled)"
+  else
+    why="This command failed with exit code $st (likely wrong flags or arguments)"
+  fi
+  print -r -- "$(_clh_context)
+
+$why:
+$cmd
+Output only the corrected command."
+}
+
+# Print the generated command for a natural-language query.
+_clh_generate() {
+  _clh_complete 0 user "$(_clh_request_msg "$1")"
+}
+
+# Print a one-sentence explanation of a command.
+_clh_explain() {
+  emulate -L zsh
+  local out
+  out=$(_clh_chat "$_CLH_EXPLAIN_SYSTEM" 0 80 "$(_clh_turns user "$1")") || return 1
+  out=${out//$'\n'/ }
+  print -r -- "${${out##[[:space:]]##}//\`/}"
+}
+
+# Classify the line. Sets reply=(mode args...):
+#   fix | explain <cmd> | new <request> | refine <cmd> <change> | run
+_clh_parse() {
+  emulate -L zsh
+  setopt extendedglob
+  local b=${1##[[:space:]]#} P=$CLH_PREFIX
+  b=${b%%[[:space:]]#}
+  if [[ $b == ${P}fix ]]; then
+    reply=(fix)
+  elif [[ $b == ${P}\?* ]]; then
+    reply=(explain "${${b#${P}\?}##[[:space:]]#}")
+  elif [[ $b == *[[:space:]]${P}\? ]]; then
+    reply=(explain "${${b%${P}\?}%%[[:space:]]#}")
+  elif [[ $b == ${P}* ]]; then
+    reply=(new "${${b#$P}##[[:space:]]#}")
+  elif [[ $b == (#b)(*[^[:space:]])[[:space:]]##${P}[[:space:]]##(*) ]]; then
+    reply=(refine "$match[1]" "$match[2]")
+  else
+    reply=(run)
+  fi
 }
 
 # --- ZLE widgets ------------------------------------------------------------
 
+typeset -g _CLH_HINT="↵ run · ⇥ clear · ^N another · ' :: …' refine · ' ::?' explain"
+
 _clh_reset() {
   _CLH_PENDING=0
+  _CLH_TURNS=()
+  _CLH_SEEN=()
   region_highlight=()
+}
+
+# Put a generated command on the line and mark it pending.
+_clh_show() {
+  BUFFER=$1
+  CURSOR=${#BUFFER}
+  _CLH_PENDING=1
+  if [[ $1 =~ $_CLH_DANGER_RE ]]; then
+    region_highlight=("0 ${#BUFFER} fg=red,bold")
+    zle -M "⚠  potentially destructive — review carefully · $_CLH_HINT"
+  else
+    region_highlight=("0 ${#BUFFER} fg=cyan")
+    zle -M "$_CLH_HINT"
+  fi
+}
+
+# Generate from a conversation; on success show the command and keep the
+# conversation for refine / Ctrl-N.  _clh_run <temperature> <role> <content> ...
+_clh_run() {
+  local temp=$1 cmd; shift
+  zle -M "⏳ thinking ($CLH_MODEL)…"
+  zle -R
+  # On success only the command is printed; on failure only the error.
+  cmd=$(_clh_complete $temp "$@" 2>&1) || { zle -M "$cmd"; return 1 }
+  _CLH_TURNS=("$@" assistant "$cmd")
+  _CLH_SEEN+=("$cmd")
+  _clh_show "$cmd"
 }
 
 _clh_accept_line() {
   emulate -L zsh
-  if [[ $BUFFER != ${CLH_PREFIX}* ]]; then
-    _clh_reset
-    zle .accept-line
-    return
-  fi
+  local -a reply
+  _clh_parse "$BUFFER"
 
-  local query=${BUFFER#$CLH_PREFIX} cmd
-  query=${query##[[:space:]]##}
-  if [[ -z $query ]]; then
-    zle -M "usage: $CLH_PREFIX <describe the command you want>"
-    return
-  fi
+  case $reply[1] in
+    run)
+      _clh_reset
+      zle .accept-line
+      ;;
+    new)
+      [[ -z $reply[2] ]] && { zle -M "usage: $CLH_PREFIX <describe the command you want>"; return }
+      _CLH_SEEN=()
+      _clh_run 0 user "$(_clh_request_msg "$reply[2]")"
+      ;;
+    refine)
+      local -a turns
+      if (( _CLH_PENDING )) && (( ${#_CLH_TURNS} )); then
+        turns=("${(@)_CLH_TURNS[1,-2]}" "$reply[2]")   # respect manual edits
+      else
+        turns=(user "$(_clh_context)
 
-  zle -M "⏳ thinking ($CLH_MODEL)…"
-  zle -R
-
-  # On success only the command is printed; on failure only the error.
-  cmd=$(_clh_generate "$query" 2>&1) || {
-    zle -M "$cmd"
-    return
-  }
-
-  BUFFER=$cmd
-  CURSOR=${#BUFFER}
-  _CLH_PENDING=1
-  if [[ $cmd =~ $_CLH_DANGER_RE ]]; then
-    region_highlight=("0 ${#BUFFER} fg=red,bold")
-    zle -M "⚠  potentially destructive — review carefully · ↵ run · ⇥ clear"
-  else
-    region_highlight=("0 ${#BUFFER} fg=cyan")
-    zle -M "↵ run · ⇥ clear · or edit it first"
-  fi
+Request: run this command" assistant "$reply[2]")
+      fi
+      _CLH_SEEN=()
+      _clh_run 0 "${turns[@]}" user "$(_clh_refine_msg "$reply[3]")"
+      ;;
+    fix)
+      local last=${$(fc -ln -1 2>/dev/null)##[[:space:]]#}
+      [[ -z $last ]] && { zle -M "clh: no previous command to fix"; return }
+      _CLH_SEEN=("$last")
+      _clh_run 0 user "$(_clh_fix_msg "$last" $_CLH_LAST_STATUS)"
+      ;;
+    explain)
+      [[ -z $reply[2] ]] && { zle -M "usage: <command> ${CLH_PREFIX}?  or  ${CLH_PREFIX}? <command>"; return }
+      local cmd=$reply[2] out
+      BUFFER=$cmd
+      CURSOR=${#BUFFER}
+      zle -M "⏳ explaining…"
+      zle -R
+      out=$(_clh_explain "$cmd" 2>&1) || { zle -M "$out"; return }
+      zle -M "💡 $out"
+      ;;
+  esac
 }
 
 _clh_tab() {
@@ -204,18 +342,52 @@ _clh_tab() {
   fi
 }
 
+# Ctrl-N: another suggestion for the pending command's request.
+_clh_next() {
+  emulate -L zsh
+  if ! (( _CLH_PENDING )) || (( ${#_CLH_TURNS} < 4 )); then
+    zle down-line-or-history
+    return
+  fi
+  local -a turns=("${(@)_CLH_TURNS[1,-3]}") ask
+  local cmd try
+  for try in 1 2; do
+    ask=("${turns[@]}")
+    ask[-1]+=$'\n'"Give a different command than: ${(j: | :)_CLH_SEEN}"
+    zle -M "⏳ another suggestion…"
+    zle -R
+    cmd=$(_clh_complete 0.8 "${ask[@]}" 2>&1) || { zle -M "$cmd"; return }
+    (( ${_CLH_SEEN[(Ie)$cmd]} )) || break
+  done
+  if (( ${_CLH_SEEN[(Ie)$cmd]} )); then
+    zle -M "no other suggestion · $_CLH_HINT"
+    return
+  fi
+  _CLH_SEEN+=("$cmd")
+  _CLH_TURNS=("${turns[@]}" assistant "$cmd")
+  _clh_show "$cmd"
+}
+
 _clh_line_init() {
   _clh_reset
+}
+
+_clh_precmd() {
+  _CLH_LAST_STATUS=$?
 }
 
 if [[ -o interactive ]]; then
   autoload -Uz add-zle-hook-widget
   zle -N _clh_accept_line
   zle -N _clh_tab
+  zle -N _clh_next
   zle -N _clh_line_init
   add-zle-hook-widget line-init _clh_line_init
+  # Run first so $? is the user's command, not another hook's.
+  precmd_functions=(_clh_precmd ${precmd_functions:#_clh_precmd})
   bindkey '^M' _clh_accept_line
   bindkey '^I' _clh_tab
+  bindkey '^N' _clh_next
 
   # Load the model in the background so the first query is fast.
   if (( CLH_WARM )); then
