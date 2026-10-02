@@ -4,6 +4,9 @@
 #   CLH_MODEL=smollm2:1.7b ./tests/eval.sh
 zmodload zsh/datetime
 CLH_WARM=0 source ${0:A:h}/../clh.zsh
+# Never read or write the real learned history.
+tmpdir=$(mktemp -d); trap 'rm -rf $tmpdir' EXIT
+CLH_HISTORY_FILE=$tmpdir/history.jsonl
 
 queries=(
   # zsh / system
@@ -62,14 +65,14 @@ refines=(
   "create conda env named ml"    'conda create -n ml python=3.11 -y' "use python 3.12 and add numpy"
 )
 for q c ch in $refines; do
-  out=$(_clh_complete 0 user "$(_clh_request_msg "$q")" assistant "$c" user "$(_clh_refine_msg "$ch")" 2>&1)
+  out=$(_clh_complete 0 "$q" user "$(_clh_request_msg "$q")" assistant "$c" user "$(_clh_refine_msg "$ch")" 2>&1)
   printf '%-40s :: %-30s → %s\n' "$c" "$ch" "$out"
 done
 
 print "\n--- fix (failed command, exit code)"
 fixes=( 'gti status' 127  'pyhton3 app.py' 127  'docker ps -all' 1  'git psuh origin main' 1  'conda activte ml' 1 )
 for c st in $fixes; do
-  printf '%-30s (%3s) → %s\n' "$c" $st "$(_clh_complete 0 user "$(_clh_fix_msg "$c" $st)" 2>&1)"
+  printf '%-30s (%3s) → %s\n' "$c" $st "$(_clh_complete 0 "$c" user "$(_clh_fix_msg "$c" $st)" 2>&1)"
 done
 
 print "\n--- explain"
@@ -81,6 +84,18 @@ print "\n--- alternatives (temperature 0.8)"
 q="find files bigger than 100MB"; first=$(_clh_generate "$q")
 print -r -- "first: $first"
 for i in 1 2; do
-  print -r -- "alt $i: $(_clh_complete 0.8 user "$(_clh_request_msg "$q")
+  print -r -- "alt $i: $(_clh_complete 0.8 "$q" user "$(_clh_request_msg "$q")
 Give a different command than: $first" 2>&1)"
+done
+
+print "\n--- learned (seeded history; paraphrased requests)"
+learned=(
+  'deploy to staging'          './scripts/deploy.sh staging'
+  'tail api logs'              'docker compose logs -f api'
+  'open my project notes'      'code ~/notes/project.md'
+  'run the backend tests'      'make test-backend'
+)
+for r c in $learned; do _clh_learn "$r" "$c"; done
+for q in 'deploy the app to staging' 'show the api logs' 'open the project notes' 'test the backend'; do
+  printf '%-40s → %s\n' "$q" "$(_clh_generate "$q" 2>&1)"
 done

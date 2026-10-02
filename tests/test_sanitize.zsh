@@ -1,5 +1,5 @@
 #!/usr/bin/env zsh
-# Unit tests for _clh_sanitize and the destructive-command regex.
+# Unit tests for the deterministic parts of clh.zsh (no model needed).
 source ${0:A:h}/../clh.zsh
 
 fails=0
@@ -63,6 +63,47 @@ check "$(fixmsg 'zzqq x' 1)"         "exit code 1: 'zzqq' is not a known command
 check "$(CLH_URL=http://example.com:11434 _clh_start_server 2>&1)" \
   'clh: cannot reach Ollama at http://example.com:11434 (not local, so not starting it)'  autostart-remote-refused
 check "$(CLH_URL=http://localhost:1 _clh_server_up; print $?)"  7                        server-up-detects-down
+
+# --- learning and example selection (isolated history file)
+tmpdir=$(mktemp -d); trap 'rm -rf $tmpdir' EXIT
+CLH_HISTORY_FILE=$tmpdir/clh/history.jsonl
+users() { jq -r '[.[] | select(.role == "user") | .content] | join("|")' }
+
+_clh_learn 'deploy to staging' './scripts/deploy.sh staging'
+_clh_learn 'nuke build' 'rm -rf build'
+CLH_LEARN=0 _clh_learn 'list stuff' 'ls'
+check "$(jq -sc 'map(.r)' $CLH_HISTORY_FILE)"   '["deploy to staging"]'  learn-appends-skips-danger-and-off
+check "$(stat -f %Lp $CLH_HISTORY_FILE)"        600                     learn-private-file
+
+CLH_HISTORY_MAX=3
+for i in 1 2 3; do _clh_learn "req $i" "echo $i"; done
+_clh_learn 'REQ 3' 'echo 3b'
+check "$(jq -sc 'map(.c)' $CLH_HISTORY_FILE)"  '["echo 1","echo 2","echo 3b"]'  learn-dedupes-and-trims
+CLH_HISTORY_MAX=500
+
+_CLH_LEARN_PAIR=('show pods' 'kubectl get pods')
+false; _clh_precmd
+_CLH_LEARN_PAIR=('show nodes' 'kubectl get nodes')
+true; _clh_precmd
+check "$(jq -sc '[.[].r | select(startswith("show"))]' $CLH_HISTORY_FILE)"  '["show nodes"]'  learn-only-on-success
+
+rm -f $CLH_HISTORY_FILE
+check "$(_clh_select_examples 'x' | jq -c .)" "$(_clh_pair_turns "${_CLH_EXAMPLES[@]}" "${_CLH_FIX_EXAMPLES[@]}")"  select-all-unchanged
+
+CLH_EXAMPLE_MODE=keyword
+sel=$(_clh_select_examples 'kill the process on port 3000')
+check "$(jq length <<<$sel)"                     16                                        select-keyword-k
+check "$(users <<<$sel | awk -F'|' '{print $NF}')" 'kill whatever is running on port 5000' select-keyword-closest-last
+check "$(_clh_select_examples 'zzz qqq' | users)" "$(_clh_pair_turns "${(@)_CLH_EXAMPLES[1,16]}" | users)" select-keyword-no-match-defaults
+check "$(_clh_select_examples 'gti status' 1 | jq '.[-1].content')"  '"du -h -d 1"'           select-keyword-fix-examples
+
+_clh_learn 'show running docker containers' 'docker ps --format "{{.Names}}"'
+_clh_learn 'tail api logs' 'docker compose logs -f api'
+check "$(_clh_select_examples 'show running docker containers' | jq -r '.[-1].content')" \
+  'docker ps --format "{{.Names}}"'  select-learned-overrides-builtin
+check "$(_clh_select_examples 'api logs please' | users | awk -F'|' '{print $NF}')"  'tail api logs'  select-learned-match
+CLH_EXAMPLE_MODE=all
+check "$(_clh_select_examples 'api logs' | jq -r '.[-2].content')"  'tail api logs'               select-all-appends-learned
 
 (( fails )) && { print "$fails failed"; exit 1 }
 print "all passed"
