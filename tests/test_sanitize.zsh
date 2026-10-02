@@ -60,5 +60,9 @@ check "$(fixmsg 'gti status' 127)"   "exit code 127: 'gti' is not a known comman
 check "$(fixmsg 'git psuh' 1)"       'exit code 1 (likely wrong flags or arguments)'                     fixmsg-1
 check "$(fixmsg 'zzqq x' 1)"         "exit code 1: 'zzqq' is not a known command (probably misspelled)"   fixmsg-unknown-cmd
 
+check "$(CLH_URL=http://example.com:11434 _clh_start_server 2>&1)" \
+  'clh: cannot reach Ollama at http://example.com:11434 (not local, so not starting it)'  autostart-remote-refused
+check "$(CLH_URL=http://localhost:1 _clh_server_up; print $?)"  7                        server-up-detects-down
+
 (( fails )) && { print "$fails failed"; exit 1 }
 print "all passed"

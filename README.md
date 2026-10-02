@@ -16,7 +16,7 @@ It covers zsh/macOS, python, conda, docker, git, file and search commands.
 source ~/.zshrc
 ```
 
-Requires `ollama serve` to be running.
+If Ollama isn't running, the first `::` starts it (`ollama serve` in the background, detached from the terminal, logging to `~/.ollama/clh-serve.log`). The first start can take up to about 20s. Set `CLH_AUTOSTART=0` to turn this off. Ollama is only started for a local `CLH_URL`.
 
 ## Usage
 
@@ -50,6 +50,8 @@ Set these before the `source` line in `~/.zshrc`:
 | `CLH_PREFIX` | `::` | trigger prefix |
 | `CLH_TIMEOUT` | `30` | seconds |
 | `CLH_WARM` | `1` | preload the model in the background when a shell starts |
+| `CLH_AUTOSTART` | `1` | start `ollama serve` if it isn't running |
+| `CLH_OLLAMA_LOG` | `~/.ollama/clh-serve.log` | log file for a server started by clh |
 
 ## Choosing a model
 
