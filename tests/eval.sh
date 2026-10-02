@@ -53,3 +53,34 @@ for q in $queries; do
   out=$(_clh_generate "$q" 2>&1)
   printf '%-55s → %s  (%.2fs)\n' "$q" "$out" $(( EPOCHREALTIME - s ))
 done
+
+print "\n--- refine (request | command :: change)"
+refines=(
+  "find big files"               'find . -type f -size +100M'  "only python files"
+  "show git history"             'git log --oneline'           "last 5 only"
+  "show running docker containers" 'docker ps'                 "include stopped ones"
+  "create conda env named ml"    'conda create -n ml python=3.11 -y' "use python 3.12 and add numpy"
+)
+for q c ch in $refines; do
+  out=$(_clh_complete 0 user "$(_clh_request_msg "$q")" assistant "$c" user "$(_clh_refine_msg "$ch")" 2>&1)
+  printf '%-40s :: %-30s → %s\n' "$c" "$ch" "$out"
+done
+
+print "\n--- fix (failed command, exit code)"
+fixes=( 'gti status' 127  'pyhton3 app.py' 127  'docker ps -all' 1  'git psuh origin main' 1  'conda activte ml' 1 )
+for c st in $fixes; do
+  printf '%-30s (%3s) → %s\n' "$c" $st "$(_clh_complete 0 user "$(_clh_fix_msg "$c" $st)" 2>&1)"
+done
+
+print "\n--- explain"
+for c in 'rm -rf build' 'git reset --soft HEAD~1' 'lsof -ti :3000' 'tar -xzf a.tar.gz -C /tmp'; do
+  printf '%-30s → %s\n' "$c" "$(_clh_explain "$c" 2>&1)"
+done
+
+print "\n--- alternatives (temperature 0.8)"
+q="find files bigger than 100MB"; first=$(_clh_generate "$q")
+print -r -- "first: $first"
+for i in 1 2; do
+  print -r -- "alt $i: $(_clh_complete 0.8 user "$(_clh_request_msg "$q")
+Give a different command than: $first" 2>&1)"
+done
