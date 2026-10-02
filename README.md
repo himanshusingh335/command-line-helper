@@ -13,8 +13,9 @@ It covers python, conda, docker, git, file and search commands, in three version
 |---|---|---|
 | zsh | `clh.zsh` | macOS (the original) |
 | bash 4+ | `clh.bash` | Linux, WSL, Git Bash on Windows |
+| PowerShell 7+ | `clh.ps1` | Windows (also runs on Windows PowerShell 5.1 and pwsh on Linux/macOS) |
 
-Each file is self-contained, and the prompts are tuned for the platform: BSD tools on macOS, GNU tools and the distro's package manager on Linux. Learned commands (`~/.local/share/clh/history.jsonl`) are shared when zsh and bash run on the same machine.
+Each file is self-contained, and the prompts are tuned for the platform: BSD tools on macOS, GNU tools and the distro's package manager on Linux, PowerShell cmdlets and winget on Windows. Learned commands (`~/.local/share/clh/history.jsonl`) are shared when zsh and bash run on the same machine.
 
 ## Install
 
@@ -25,6 +26,15 @@ source ~/.zshrc
 ./install-bash.sh   # bash: the same for ~/.bashrc (needs bash 4+; macOS ships 3.2)
 source ~/.bashrc
 ```
+
+On Windows, install [Ollama](https://ollama.com/download) (`winget install Ollama.Ollama`), then in PowerShell:
+
+```powershell
+pwsh -ExecutionPolicy Bypass -File .\install.ps1   # pulls the model, dot-sources clh.ps1 from $PROFILE
+. $PROFILE
+```
+
+The PowerShell version needs no curl or jq. If your profile switches PSReadLine's edit mode (`Set-PSReadLineOption -EditMode ...`), put the clh line after it.
 
 If Ollama isn't running, the first `::` starts it (`ollama serve` in the background, detached from the terminal, logging to `~/.ollama/clh-serve.log`). The first start can take up to about 20s. Set `CLH_AUTOSTART=0` to turn this off. Ollama is only started for a local `CLH_URL`.
 
@@ -61,6 +71,13 @@ Everything above works the same, with two differences:
 
 - bash can't color the command line. Instead, a hint line is printed above the prompt, in red with ⚠ for destructive commands.
 - Tab and Ctrl-N are only taken over while a generated command is on the line. The rest of the time they are your normal completion and history keys, so double-Tab listing keeps working. Enter is always handled by clh, in both emacs and vi mode.
+
+### Differences in PowerShell
+
+- As in bash, a hint line above the prompt replaces the coloring, and Tab, Ctrl+N and Ctrl+C are only taken over while a generated command is on the line.
+- `::fix` gets PowerShell's actual error message (for example "A parameter cannot be found that matches parameter name 'Recurce'"), not just an exit code, so it can fix more than typos.
+- Settings are saved as JSON in `%APPDATA%\clh\config.json`; learned commands are kept in `%LOCALAPPDATA%\clh\history.jsonl`. Set values in `$PROFILE` with `$env:CLH_MODEL = '...'` (or `$CLH_MODEL = '...'`) before the clh line.
+- Destructive-command detection knows PowerShell: `Remove-Item -Recurse/-Force`, `Format-Volume`, `Stop-Process -Force`, `Set-ExecutionPolicy` and similar.
 
 ## Help and settings
 
@@ -114,6 +131,6 @@ Measured on an M-series Mac with `tests/eval.sh` (25 requests):
 zsh tests/test_sanitize.zsh   # unit tests (no model needed)
 ./tests/eval.sh               # sample requests → generated commands
 zsh tests/bench_examples.zsh  # score example modes against the model (-v prints every answer)
-tests/run_containers.sh       # bash suite in a Linux container + version sync check (Docker/OrbStack)
-tests/run_containers.sh --eval  # also sample requests through clh.bash against the host's Ollama
+tests/run_containers.sh       # bash and PowerShell suites in Linux containers + version sync check (Docker/OrbStack)
+tests/run_containers.sh --eval  # also sample requests through clh.bash and clh.ps1 against the host's Ollama
 ```

@@ -8,6 +8,7 @@ A shell plugin that turns plain-English requests into shell commands using a loc
 
 - `clh.zsh`: zsh on macOS, the reference version. `install.sh` checks the dependencies, pulls the model and appends the `source` line to `~/.zshrc`.
 - `clh.bash`: bash 4+ on Linux, WSL and Git Bash. A function-by-function port with the same names, so the two files read side by side. `install-bash.sh` installs it into `~/.bashrc`.
+- `clh.ps1`: PowerShell (Windows first). Same function names, but no curl/jq: `Invoke-RestMethod`, `ConvertTo-Json`, and the example ranking reimplemented in PowerShell. Its prompts, examples, fix examples and danger regex are PowerShell-specific. `install.ps1` dot-sources it from `$PROFILE`.
 
 A change to behavior in one version usually belongs in the others too.
 
@@ -18,11 +19,13 @@ zsh tests/test_sanitize.zsh            # unit tests, no model needed; exits 1 on
 ./tests/eval.sh                        # sends sample requests to the real model (needs Ollama running)
 zsh tests/bench_examples.zsh -v        # scores CLH_EXAMPLE_MODE all/keyword/embed with accept patterns
 CLH_MODEL=qwen3.5:4b ./tests/eval.sh   # compare another model
-tests/run_containers.sh                # test_bash.sh in a Debian bash 5 container + test_sync.zsh
-tests/run_containers.sh --eval         # also eval_bash.sh against the host's Ollama (host.docker.internal)
+tests/run_containers.sh                # test_bash.sh (Debian bash 5) and test_ps.ps1 (pwsh 7) in containers + test_sync.zsh
+tests/run_containers.sh --eval         # also eval_bash.sh / eval_ps.ps1 against the host's Ollama (host.docker.internal)
 ```
 
-macOS ships bash 3.2, so `clh.bash` is tested in Docker/OrbStack (`tests/docker/bash.Dockerfile`). `tests/test_sync.zsh` compares `_clh_dump_data` output across versions: setting names/types/non-path defaults, and the request and fix examples between zsh and bash. System prompts differ per platform on purpose and are not compared.
+macOS ships bash 3.2 and no pwsh, so `clh.bash` and `clh.ps1` are tested in Docker/OrbStack (`tests/docker/*.Dockerfile`). The pwsh image is built from the official tarball for the host's architecture, because Microsoft's image is amd64-only and .NET segfaults under qemu on Apple Silicon. `tests/test_sync.zsh` compares `_clh_dump_data` output across versions: setting names/types/non-path defaults everywhere, and the request and fix examples between zsh and bash. It also feeds the zsh examples and a fixed history to `clh.ps1` and checks that it selects exactly what the jq ranking selects (keyword and all modes). System prompts differ per platform on purpose and are not compared.
+
+For interactive checks, run the shell inside `tmux` in the container (`tmux send-keys`, `tmux capture-pane -p`). pwsh queries the cursor position, so a raw pty without a terminal emulator hangs.
 
 There's no test runner and no way to filter tests. To run one case, source the plugin and call the function directly:
 
@@ -56,6 +59,8 @@ zsh -c 'source ./clh.zsh; local -a reply; _clh_parse "git log :: last 5"; print 
 **Explain** uses its own system prompt and few-shots (`_CLH_EXPLAIN_SYSTEM`, `_CLH_EXPLAIN_EXAMPLES`). The ⚠ marker is not decided by the model. It comes from matching against `_CLH_DANGER_RE`, the same regex that colors destructive generated commands red.
 
 **bash port specifics (`clh.bash`).** Readline can't make a `bind -x` handler decide whether the line is accepted, so Enter is a macro, `"\C-x}1\C-x}2"`. `\C-x}1` runs `_clh_accept_line`, which edits `READLINE_LINE` and rebinds `\C-x}2` to `accept-line` (run) or `redraw-current-line` (stay on the line). Tab and Ctrl-N are bound to their macros (`\C-x}3…4`, `\C-x}5…6`) only while a command is pending (`_clh_grab_keys`), then restored to the bindings recorded at load (`_CLH_ORIG_TAB/NEXT`). Routing them through a macro all the time would break readline's double-Tab detection. Bindings cover the emacs and vi-insert keymaps (Enter also covers vi-command). There is no `zle -M` and no buffer coloring: `_clh_status` (transient, `\r\e[K`) and `_clh_msg` (a line above the prompt) replace them. `_clh_precmd` is forced to the front of `PROMPT_COMMAND` (string or array), returns the saved `$?`, and also resets pending state, which stands in for zsh's `line-init`. `::fix` reads the last command with `history 1`, not `fc -ln -1`, because inside `bind -x` the latter skips the newest entry. `_CLH_OS` (linux/macos/gitbash) selects the platform rules in `_CLH_SYSTEM` and the install hints.
+
+**PowerShell port specifics (`clh.ps1`).** State lives in `$global:` variables, and settings are `$global:CLH_*` strings. A setting is preset if `$env:CLH_X` or `$CLH_X` holds a non-default value when the file is dot-sourced. The Enter handler (`Set-PSReadLineKeyHandler`) reads the line with `GetBufferState`, edits it with `Replace`, and runs it by calling the key's original PSReadLine function through reflection (`_clh_call`). `_clh_grab_keys` binds Tab, Ctrl+N and Ctrl+C only while a command is pending and restores their built-in functions afterwards; keys bound to custom script blocks are left alone. Messages go through `_clh_msg`: clear the row, `Write-Host`, then `InvokePrompt($null, [Console]::CursorTop)` so the prompt is redrawn below the message instead of over it. The success of a command, used for learning and `::fix`, comes from `_CLH_BEFORE` (the newest `$Error` entry and history id when Enter was pressed), compared later with `Get-History`'s `ExecutionStatus`, `$Error[0]` and `$LASTEXITCODE` (native commands only). Nothing wraps `prompt`, so prompt themes don't interfere. PowerShell pitfalls this code avoids: `"$P?"` reads a variable named `P?`, so use `"${P}?"`; `[Array]::Sort(keys, items)` binds the generic overload and sorts a copy, so cast to `[Array]`/`IComparer`; functions return arrays with `, $x` so one-element and empty results survive.
 
 **Ollama autostart.** `_clh_ensure_server` → `_clh_start_server` runs `ollama serve` only when `CLH_URL` is localhost/127.0.0.1/0.0.0.0. It detaches through `perl POSIX::setsid` (bash: `setsid -f`, else `nohup`) so that Ctrl-C or closing the terminal doesn't kill the server, then polls `/api/version` for up to 60s. When a shell starts, a background `curl` warms the model (`CLH_WARM`).
 
