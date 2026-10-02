@@ -15,6 +15,8 @@
 : ${CLH_PREFIX:=::}
 : ${CLH_TIMEOUT:=30}
 : ${CLH_WARM:=1}
+: ${CLH_AUTOSTART:=1}
+: ${CLH_OLLAMA_LOG:=$HOME/.ollama/clh-serve.log}
 
 typeset -g _CLH_PENDING=0 _CLH_LAST_STATUS=0
 # Conversation behind the generated command (role/content pairs) and the
@@ -217,6 +219,37 @@ $cmd
 Output only the corrected command."
 }
 
+# --- Ollama server ----------------------------------------------------------
+
+_clh_server_up() {
+  curl -s --max-time 1 "$CLH_URL/api/version" >/dev/null 2>&1
+}
+
+# Start `ollama serve` in its own session (so Ctrl-C or closing the terminal
+# doesn't kill it) and wait for it to answer. Only for a server on this machine.
+_clh_start_server() {
+  emulate -L zsh
+  local hostport=${${CLH_URL#*://}%%/*} deadline=$(( SECONDS + 60 ))
+  if [[ $hostport != (localhost|127.0.0.1|0.0.0.0)(:*|) ]]; then
+    print -u2 "clh: cannot reach Ollama at $CLH_URL (not local, so not starting it)"
+    return 1
+  fi
+  if ! command -v ollama >/dev/null; then
+    print -u2 "clh: ollama is not installed (brew install ollama)"
+    return 1
+  fi
+  mkdir -p ${CLH_OLLAMA_LOG:h}
+  ( OLLAMA_HOST=$hostport perl -MPOSIX -e 'POSIX::setsid(); POSIX::close($_) for 3..255; exec @ARGV' ollama serve \
+      >>$CLH_OLLAMA_LOG 2>&1 </dev/null & ) 2>/dev/null
+  # On first start Ollama can spend ~20s detecting the GPU before answering.
+  while (( SECONDS < deadline )); do
+    _clh_server_up && return 0
+    sleep 0.5
+  done
+  print -u2 "clh: started ollama but it did not respond — see $CLH_OLLAMA_LOG"
+  return 1
+}
+
 # Print the generated command for a natural-language query.
 _clh_generate() {
   _clh_complete 0 user "$(_clh_request_msg "$1")"
@@ -278,10 +311,24 @@ _clh_show() {
   fi
 }
 
+# Make sure Ollama is running, starting it if allowed. Shows progress.
+_clh_ensure_server() {
+  _clh_server_up && return 0
+  if ! (( CLH_AUTOSTART )); then
+    zle -M "clh: cannot reach Ollama at $CLH_URL — is 'ollama serve' running?"
+    return 1
+  fi
+  zle -M "🚀 starting ollama… (the first start can take ~20s)"
+  zle -R
+  local err
+  err=$(_clh_start_server 2>&1) || { zle -M "$err"; return 1 }
+}
+
 # Generate from a conversation; on success show the command and keep the
 # conversation for refine / Ctrl-N.  _clh_run <temperature> <role> <content> ...
 _clh_run() {
   local temp=$1 cmd; shift
+  _clh_ensure_server || return 1
   zle -M "⏳ thinking ($CLH_MODEL)…"
   zle -R
   # On success only the command is printed; on failure only the error.
@@ -329,6 +376,7 @@ Request: run this command" assistant "$reply[2]")
       local cmd=$reply[2] out
       BUFFER=$cmd
       CURSOR=${#BUFFER}
+      _clh_ensure_server || return
       zle -M "⏳ explaining…"
       zle -R
       out=$(_clh_explain "$cmd" 2>&1) || { zle -M "$out"; return }
@@ -361,6 +409,7 @@ _clh_next() {
   fi
   local -a turns=("${(@)_CLH_TURNS[1,-3]}") ask
   local cmd try
+  _clh_ensure_server || return
   for try in 1 2; do
     ask=("${turns[@]}")
     ask[-1]+=$'\n'"Give a different command than: ${(j: | :)_CLH_SEEN}"
