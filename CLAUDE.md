@@ -42,6 +42,8 @@ zsh -c 'source ./clh.zsh; local -a reply; _clh_parse "git log :: last 5"; print 
 
 **Prompt construction.** Each user message comes from a builder: `_clh_request_msg` (adds `_clh_context` with OS, cwd, the first 25 files, git branch and conda env, plus `_clh_hints`), `_clh_refine_msg` or `_clh_fix_msg`. `_clh_hints` adds targeted instructions for phrasings small models get wrong (currently "conda env in this folder" → `-p ./.conda`). The fix examples in `_CLH_FIX_EXAMPLES` use the exact wording that `_clh_fix_msg` produces. Keep the two in sync if you change that wording.
 
+**Settings and the `clh` command.** `_CLH_SETTINGS` (name, type, default, description) is the single list of user settings: it sets defaults at load, drives `clh set` validation (`_clh_check_value`: bool, int, str or `a|b|c`), and the help/config output. Load order: values set to a non-default before sourcing are recorded in `_CLH_PRESET` and win; then `$CLH_CONFIG_FILE` (written by `_clh_save_setting`) is sourced; then defaults fill the rest. `clh` dispatches to `_clh_help`, `_clh_config`, `_clh_settings_ui` (read/vared loop), `_clh_set`, `_clh_reset_setting`, `_clh_history`, `_clh_forget`. `_clh_parse` maps `::help`/`::settings` to mode `clh`, which replaces the buffer with `clh <word>` and accepts it. To add a setting, add one row to `_CLH_SETTINGS`; the help page, `clh config` and validation pick it up.
+
 **Explain** uses its own system prompt and few-shots (`_CLH_EXPLAIN_SYSTEM`, `_CLH_EXPLAIN_EXAMPLES`). The ⚠ marker is not decided by the model. It comes from matching against `_CLH_DANGER_RE`, the same regex that colors destructive generated commands red.
 
 **Ollama autostart.** `_clh_ensure_server` → `_clh_start_server` runs `ollama serve` only when `CLH_URL` is localhost/127.0.0.1/0.0.0.0. It detaches through `perl POSIX::setsid` so that Ctrl-C or closing the terminal doesn't kill the server, then polls `/api/version` for up to 60s. When a shell starts, a background `curl` warms the model (`CLH_WARM`).
@@ -49,6 +51,6 @@ zsh -c 'source ./clh.zsh; local -a reply; _clh_parse "git log :: last 5"; print 
 ## Conventions
 
 - Target environment is zsh on macOS with BSD tools. The system prompt tells the model to avoid GNU-only flags, and the plugin code should avoid them too.
-- Functions start with `emulate -L zsh` (plus `setopt extendedglob` where patterns need it). Internal names use the `_clh_` / `_CLH_` prefix. User config is `CLH_*`, set with `: ${VAR:=default}` defaults.
-- Widgets and keybindings are registered only under `[[ -o interactive ]]`. This is why the tests can `source clh.zsh` and call functions directly.
+- Functions start with `emulate -L zsh` (plus `setopt extendedglob` where patterns need it). Internal names use the `_clh_` / `_CLH_` prefix. User config is `CLH_*`, declared in `_CLH_SETTINGS` (not with `: ${VAR:=default}`).
+- Widgets and keybindings are registered only under `[[ -o interactive ]]`. This is why the tests can `source clh.zsh` and call functions directly. `test_sanitize.zsh` unsets `CLH_*` and points `CLH_CONFIG_FILE` / `CLH_HISTORY_FILE` at a temp dir, so the user's saved settings and history never affect it.
 - When you change model behavior (prompts, examples, hints, danger regex, parsing), add a check to `tests/test_sanitize.zsh` for the deterministic part, and add a case to `tests/eval.sh` for the model-dependent part.

@@ -43,11 +43,26 @@ The generated command is shown in cyan. Potentially destructive commands are sho
 
 When you run a generated command and it succeeds (exit code 0), clh stores the request together with the command as you ran it, including any edits you made. Later requests that share words with a stored one get it as an example, so the model picks up your own scripts, paths and flags: after `:: deploy to staging` → `./scripts/deploy.sh staging` once, `:: ship it to staging` gives the same command.
 
-Pairs are kept in `~/.local/share/clh/history.jsonl` (mode 600, at most `CLH_HISTORY_MAX` entries). Destructive commands, `::fix` results and failed commands are never stored. To forget everything, delete the file. To turn learning off, set `CLH_LEARN=0`.
+Pairs are kept in `~/.local/share/clh/history.jsonl` (mode 600, at most `CLH_HISTORY_MAX` entries). Destructive commands, `::fix` results and failed commands are never stored. See them with `clh history`, remove some with `clh forget <text>` or all with `clh forget`, and turn learning off with `clh set learn off`.
+
+## Help and settings
+
+`::help` (or `clh help`) prints a one-page summary of everything above and the current settings. `::settings` (or `clh settings`) opens an interactive editor: pick a setting by number or name, on/off settings toggle, others prompt for a value, and `r <number>` resets one.
+
+```sh
+clh config                        # every setting, its value and where it comes from
+clh set model qwen3.5:4b          # change and save (names: model, example-mode, CLH_LEARN, ...)
+clh set example-mode keyword
+clh reset model                   # back to the default; clh reset --all for everything
+clh history 50                    # last 50 learned commands
+clh forget docker                 # forget learned commands containing "docker"
+```
+
+Values are checked (`clh set timeout soon` is refused), apply to the current shell immediately, and are saved in `~/.config/clh/config.zsh` for new shells. clh warns when a model you pick isn't installed.
 
 ## Config
 
-Set these before the `source` line in `~/.zshrc`:
+Change these with `clh set` / `clh settings`, or set them before the `source` line in `~/.zshrc`. A value in `~/.zshrc` that differs from the default wins over a saved one (`clh config` shows `(zshrc)` next to it); restating a default there has no effect. The config file location itself is `CLH_CONFIG_FILE`, default `~/.config/clh/config.zsh`.
 
 | Variable | Default | |
 |---|---|---|
