@@ -24,14 +24,20 @@ Rules:
 - macOS uses BSD tools: sed -i '\'''\'', stat -f, date -v, pbcopy, open. Homebrew is available.
 - Prefer common tools: git, docker, docker compose, conda, python3, pip, find, grep, du, lsof, tar.
 - Only use flags that exist on macOS (no grep -P, no GNU-only options).
+- conda env "here" / "in this folder" / "local" / "-p" means a prefix env: conda create -p ./.conda ..., activated with conda activate ./.conda.
 - Do exactly what was asked: never add destructive or extra flags (like --hard, -a, -f, file filters) the user did not ask for.
 - Use the context (directory, files, git branch, conda env) when it helps; use placeholders like <name> only when the value is truly unknown.'
 
 # Few-shot examples: alternating request / command.
 typeset -ga _CLH_EXAMPLES=(
   'create a python virtual environment and activate it'    'python3 -m venv .venv && source .venv/bin/activate'
+  'make a venv here'                                       'python3 -m venv .venv'
   'install packages from requirements file'                'pip install -r requirements.txt'
   'create conda env named ml with python 3.11'             'conda create -n ml python=3.11 -y'
+  'make a conda env in this folder'                        'conda create -p ./.conda python=3.11 -y'
+  'local conda env with python 3.9 and pandas'             'conda create -p ./.conda python=3.9 pandas -y'
+  'activate the conda env in this folder'                  'conda activate ./.conda'
+  'remove the local conda env'                             'conda remove -p ./.conda --all -y'
   'list conda environments'                                'conda env list'
   'show running docker containers'                         'docker ps'
   'start compose services in background'                   'docker compose up -d'
@@ -88,6 +94,25 @@ _clh_context() {
 - Conda env: ${CONDA_DEFAULT_ENV:-none}"
 }
 
+# Extra hints for phrasings small models tend to get wrong.
+_clh_hints() {
+  emulate -L zsh
+  setopt nocasematch
+  local q=$1
+  if [[ $q =~ '(conda|env|environment)' && $q != *(venv|virtualenv)* \
+        && $q =~ '(here|this (folder|dir|directory)|current (folder|dir|directory)|local|-p|prefix)' ]]; then
+    local tpl
+    if [[ $q =~ '(activate|use|switch|enter)' ]]; then
+      tpl='conda activate ./.conda'
+    elif [[ $q =~ '(delete|remove|destroy|uninstall)' ]]; then
+      tpl='conda remove -p ./.conda --all -y'
+    else
+      tpl='conda create -p ./.conda python=3.11 -y (change the python version / add packages if asked)'
+    fi
+    print -r -- "IMPORTANT: the env lives in the folder ./.conda. Use -p ./.conda, never -n and never just \".\". Answer with: $tpl"
+  fi
+}
+
 # Print the generated command for a natural-language query.
 # Returns non-zero and prints an error on stderr on failure.
 _clh_generate() {
@@ -99,7 +124,8 @@ _clh_generate() {
     --arg sys "$_CLH_SYSTEM" \
     --arg q "$(_clh_context)
 
-Request: $query" \
+Request: $query
+$(_clh_hints "$query")" \
     '{model: $model, stream: false, think: false, keep_alive: "30m",
       options: {temperature: 0, num_predict: 120},
       messages: ([{role: "system", content: $sys}]

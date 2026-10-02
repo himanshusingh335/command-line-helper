@@ -30,5 +30,14 @@ check "$(danger 'git status')"              no   safe-git
 check "$(danger 'find . -name "*.py"')"     no   safe-find
 check "$(danger 'docker ps')"               no   safe-docker
 
+hint() { _clh_hints "$1" | grep -o 'Answer with: conda [a-z]*' || print none }
+check "$(hint 'create conda env in current folder')"  'Answer with: conda create'    hint-create
+check "$(hint 'make conda environment HERE')"         'Answer with: conda create'    hint-case-insensitive
+check "$(hint 'activate the env in this folder')"     'Answer with: conda activate'  hint-activate
+check "$(hint 'delete the local conda env')"          'Answer with: conda remove'    hint-remove
+check "$(hint 'create conda env named ml')"           none                           hint-named-env
+check "$(hint 'create a venv here')"                  none                           hint-venv
+check "$(hint 'list files here')"                     none                           hint-unrelated
+
 (( fails )) && { print "$fails failed"; exit 1 }
 print "all passed"
