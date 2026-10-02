@@ -39,6 +39,12 @@ If Ollama isn't running, the first `::` starts it (`ollama serve` in the backgro
 
 The generated command is shown in cyan. Potentially destructive commands are shown in **red** with a warning: `rm -rf`, `sudo`, force push, `reset --hard`, prune and similar. Nothing runs without your Enter.
 
+### Learning from what you run
+
+When you run a generated command and it succeeds (exit code 0), clh stores the request together with the command as you ran it, including any edits you made. Later requests that share words with a stored one get it as an example, so the model picks up your own scripts, paths and flags: after `:: deploy to staging` → `./scripts/deploy.sh staging` once, `:: ship it to staging` gives the same command.
+
+Pairs are kept in `~/.local/share/clh/history.jsonl` (mode 600, at most `CLH_HISTORY_MAX` entries). Destructive commands, `::fix` results and failed commands are never stored. To forget everything, delete the file. To turn learning off, set `CLH_LEARN=0`.
+
 ## Config
 
 Set these before the `source` line in `~/.zshrc`:
@@ -52,6 +58,12 @@ Set these before the `source` line in `~/.zshrc`:
 | `CLH_WARM` | `1` | preload the model in the background when a shell starts |
 | `CLH_AUTOSTART` | `1` | start `ollama serve` if it isn't running |
 | `CLH_OLLAMA_LOG` | `~/.ollama/clh-serve.log` | log file for a server started by clh |
+| `CLH_LEARN` | `1` | learn from generated commands you run |
+| `CLH_HISTORY_FILE` | `~/.local/share/clh/history.jsonl` | learned request → command pairs |
+| `CLH_HISTORY_MAX` | `500` | entries kept in the history file |
+| `CLH_EXAMPLE_MODE` | `all` | few-shot examples: `all` (every built-in plus the 3 closest learned pairs), `keyword` or `embed` (only the `CLH_EXAMPLES_K` most similar, by shared words or by embeddings). `all` is the fastest: its fixed examples stay in Ollama's prompt cache |
+| `CLH_EXAMPLES_K` | `8` | examples sent in `keyword` / `embed` mode |
+| `CLH_EMBED_MODEL` | `nomic-embed-text` | embedding model for `embed` mode (`ollama pull` it first) |
 
 ## Choosing a model
 
@@ -69,4 +81,5 @@ Measured on an M-series Mac with `tests/eval.sh` (25 requests):
 ```sh
 zsh tests/test_sanitize.zsh   # unit tests (no model needed)
 ./tests/eval.sh               # sample requests → generated commands
+zsh tests/bench_examples.zsh  # score example modes against the model (-v prints every answer)
 ```
