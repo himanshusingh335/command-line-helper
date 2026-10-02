@@ -695,6 +695,15 @@ clh() {
   esac
 }
 
+# For tests/test_sync.zsh: the data that must match the other versions.
+_clh_dump_data() {
+  jq -nc --argjson s "$(jq -nc '$ARGS.positional' --args "${_CLH_SETTINGS[@]}")" \
+    --argjson e "$(_clh_pair_turns "${_CLH_EXAMPLES[@]}")" \
+    --argjson f "$(_clh_pair_turns "${_CLH_FIX_EXAMPLES[@]}")" \
+    '{settings: [range(0; $s | length; 4) as $i | {n: $s[$i], t: $s[$i + 1], d: $s[$i + 2]}],
+      examples: $e, fix_examples: $f}'
+}
+
 # --- ZLE widgets ------------------------------------------------------------
 
 typeset -g _CLH_HINT="↵ run · ⇥ clear · ^N another · ' :: …' refine · ' ::?' explain"
