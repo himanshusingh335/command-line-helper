@@ -832,7 +832,14 @@ function _clh_call([string]$fn) {
 # The built-in function bound to a key: a name, '' if unbound, $null if it
 # is a custom handler (which clh leaves alone).
 function _clh_key_function([string]$chord) {
-  $h = Get-PSReadLineKeyHandler -Chord $chord -ErrorAction Ignore | Select-Object -First 1
+  if ((Get-Command Get-PSReadLineKeyHandler).Parameters.ContainsKey('Chord')) {
+    $h = Get-PSReadLineKeyHandler -Chord $chord -ErrorAction Ignore | Select-Object -First 1
+  } else {
+    # PSReadLine 2.0 (Windows PowerShell 5.1) has no -Chord: search the bound keys.
+    $all = @(Get-PSReadLineKeyHandler -Bound)
+    $h = $all | Where-Object { $_.Key -ceq $chord } | Select-Object -First 1
+    if (-not $h) { $h = $all | Where-Object { $_.Key -eq $chord } | Select-Object -First 1 }
+  }
   if (-not $h) { return '' }
   $fn = [string]$h.Function
   if ([Microsoft.PowerShell.PSConsoleReadLine].GetMethod($fn, [type[]]@([Nullable[ConsoleKeyInfo]], [object]))) { return $fn }
