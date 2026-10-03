@@ -3,7 +3,19 @@
 $env:CLH_WARM = '0'
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ('clh-eval-' + [guid]::NewGuid())
 $env:CLH_HISTORY_FILE = Join-Path $tmp 'history.jsonl'
-. (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'clh.ps1')
+$plugin = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'clh.ps1'
+if ($IsWindows -or $PSVersionTable.PSEdition -eq 'Desktop') {
+  . $plugin
+} else {
+  # The container runs Linux pwsh, but the eval targets Windows: load the
+  # plugin with its platform check forced to Windows, so the model gets the
+  # Windows prompt, and report a Windows OS in the context. Generated
+  # commands are never run.
+  $env:LOCALAPPDATA = Join-Path $tmp 'data'; $env:APPDATA = Join-Path $tmp 'config'
+  $src = [IO.File]::ReadAllText($plugin) -replace '(?m)^\$global:_ClhIsWindows = .*$', '$global:_ClhIsWindows = $true'
+  . ([ScriptBlock]::Create($src))
+  function _clh_os_name { 'Microsoft Windows 10.0.26100 (Windows 11, emulated)' }
+}
 
 "platform: $($global:_ClhPlatform) ($(_clh_os_name))"
 $queries = @(

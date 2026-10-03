@@ -2,7 +2,7 @@
 # Check that the zsh, bash and PowerShell versions agree where they must:
 # setting names, types and (non-path) defaults everywhere; few-shot and fix
 # examples between zsh and bash. Prompts are platform-specific on purpose.
-# bash and pwsh run in Docker when they aren't installed locally (bash 4+).
+# Needs zsh, bash 4+, pwsh and jq: run it in the pwsh image via tests/run.sh.
 root=${0:A:h:h}
 fails=0
 check() {
@@ -16,21 +16,13 @@ settings() { jq -c --argjson p $paths '.settings | map(if IN(.n; $p[]) then del(
 
 zsh_data=$(zsh -fc "source $root/clh.zsh; _clh_dump_data")
 
-if (( ${${$(bash -c 'echo $BASH_VERSINFO' 2>/dev/null)}:-0} >= 4 )); then
-  bash_data=$(bash --norc -c "source $root/clh.bash; _clh_dump_data")
-else
-  bash_data=$(docker run --rm -v $root:/clh clh-bash bash --norc -c 'source /clh/clh.bash; _clh_dump_data')
-fi
+bash_data=$(bash --norc -c "source $root/clh.bash; _clh_dump_data")
 check "$(settings <<<$bash_data)"              "$(settings <<<$zsh_data)"              bash-settings
 check "$(jq -c .examples <<<$bash_data)"       "$(jq -c .examples <<<$zsh_data)"       bash-examples
 check "$(jq -c .fix_examples <<<$bash_data)"   "$(jq -c .fix_examples <<<$zsh_data)"   bash-fix-examples
 
 if [[ -f $root/clh.ps1 ]]; then
-  if command -v pwsh >/dev/null; then
-    ps_data=$(pwsh -NoProfile -Command ". '$root/clh.ps1'; _clh_dump_data")
-  else
-    ps_data=$(docker run --rm -v $root:/clh clh-pwsh pwsh -NoProfile -Command '. /clh/clh.ps1; _clh_dump_data')
-  fi
+  ps_data=$(pwsh -NoProfile -Command ". '$root/clh.ps1'; _clh_dump_data")
   check "$(settings <<<$ps_data)"  "$(settings <<<$zsh_data)"  pwsh-settings
 
   # clh.ps1 reimplements _CLH_JQ_LIB; given the same examples and history it
@@ -57,11 +49,7 @@ EOF
     want=$(zsh -fc "unset -m 'CLH_*'; CLH_CONFIG_FILE=/dev/null CLH_HISTORY_FILE=$tmp/history.jsonl
       source $root/clh.zsh; CLH_EXAMPLE_MODE=$mode
       while IFS= read -r q; do _clh_select_examples \"\$q\" | jq -c '[.[] | select(.role == \"user\") | .content | select(startswith(\"This command\") | not)]'; done < $tmp/queries.txt")
-    if command -v pwsh >/dev/null; then
-      got=$(CLH_ROOT=$root pwsh -NoProfile -File $tmp/select.ps1 $tmp $mode | jq -c .)
-    else
-      got=$(docker run --rm -e CLH_ROOT=/clh -v $root:/clh -v $tmp:/t clh-pwsh pwsh -NoProfile -File /t/select.ps1 /t $mode | jq -c .)
-    fi
+    got=$(CLH_ROOT=$root pwsh -NoProfile -File $tmp/select.ps1 $tmp $mode | jq -c .)
     check "$got" "$want" pwsh-ranking-$mode
   done
 fi
