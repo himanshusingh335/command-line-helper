@@ -1,4 +1,4 @@
-# Run sample requests through the model with clh.ps1 and print the results
+﻿# Run sample requests through the model with clh.ps1 and print the results
 # (nothing is asserted). Usually run via: tests/run_containers.sh --eval
 $env:CLH_WARM = '0'
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ('clh-eval-' + [guid]::NewGuid())

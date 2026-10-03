@@ -1,4 +1,4 @@
-# Install clh for PowerShell: check Ollama, pull the model, and dot-source
+﻿# Install clh for PowerShell: check Ollama, pull the model, and dot-source
 # clh.ps1 from your profile.
 #   pwsh -ExecutionPolicy Bypass -File install.ps1      (Windows PowerShell: powershell ...)
 $ErrorActionPreference = 'Stop'

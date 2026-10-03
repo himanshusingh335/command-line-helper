@@ -1,4 +1,4 @@
-# Unit tests for the deterministic parts of clh.ps1 (no model needed).
+﻿# Unit tests for the deterministic parts of clh.ps1 (no model needed).
 #   pwsh -NoProfile -File tests/test_ps.ps1      (or tests/run_containers.sh)
 # Ignore the user's environment and saved settings, and keep every default
 # path (history, config) inside a temp dir.
