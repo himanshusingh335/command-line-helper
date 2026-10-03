@@ -15,26 +15,32 @@ A change to behavior in one version usually belongs in the others too.
 ## Commands
 
 ```sh
-zsh tests/test_sanitize.zsh            # unit tests, no model needed; exits 1 on any failure
-./tests/eval.sh                        # sends sample requests to the real model (needs Ollama running)
-zsh tests/bench_examples.zsh -v        # scores CLH_EXAMPLE_MODE all/keyword/embed with accept patterns
-CLH_MODEL=qwen3.5:4b ./tests/eval.sh   # compare another model
-tests/run_containers.sh                # test_bash.sh (Debian bash 5) and test_ps.ps1 (pwsh 7) in containers + test_sync.zsh
-tests/run_containers.sh --eval         # also eval_bash.sh / eval_ps.ps1 against the host's Ollama (host.docker.internal)
+tests/run.sh                              # unit tests for zsh, bash and PowerShell + version sync; exits 1 on any failure
+tests/run.sh unit zsh                     # one shell (zsh, bash, powershell)
+tests/run.sh eval                         # sample requests through every version (needs Ollama running on the host)
+CLH_MODEL=qwen3.5:4b tests/run.sh eval zsh  # compare another model (CLH_MODEL, CLH_EXAMPLE_MODE, CLH_EMBED_MODEL are passed through)
+tests/run.sh bench -v                     # zsh only: scores CLH_EXAMPLE_MODE all/keyword/embed with accept patterns
+tests/run.sh all                          # unit, eval and bench
 ```
 
-macOS ships bash 3.2 and no pwsh, so `clh.bash` and `clh.ps1` are tested in Docker/OrbStack (`tests/docker/*.Dockerfile`). The pwsh image is built from the official tarball for the host's architecture, because Microsoft's image is amd64-only and .NET segfaults under qemu on Apple Silicon. `tests/test_sync.zsh` compares `_clh_dump_data` output across versions: setting names/types/non-path defaults everywhere, and the request and fix examples between zsh and bash. It also feeds the zsh examples and a fixed history to `clh.ps1` and checks that it selects exactly what the jq ranking selects (keyword and all modes). System prompts differ per platform on purpose and are not compared.
+All tests, evals and benches run in Linux containers (Docker/OrbStack). The host only needs Docker, plus Ollama for eval/bench. The containers reach Ollama at `http://host.docker.internal:11434`. Each shell has a folder for its platform and an image in `tests/docker/`:
+
+- `tests/zsh/` (macOS): `test.zsh`, `eval.zsh`, `bench_examples.zsh` in `clh-zsh`. The tools in the image are GNU, but nothing executes generated commands. A `sw_vers` shim makes `_clh_context` report macOS. The tests must stay portable between BSD and GNU, so use `zstat`, not `stat -f`.
+- `tests/bash/` (Linux): `test.sh`, `eval.sh` in `clh-bash` (Debian, bash 5).
+- `tests/powershell/` (Windows): `test.ps1`, `eval.ps1` in `clh-pwsh` (pwsh 7 on Linux). `eval.ps1` loads `clh.ps1` with `_ClhIsWindows` forced to true, so the model gets the Windows prompt. No container runs real Windows or Windows PowerShell 5.1: Windows containers need a Windows host, and dockur/windows needs KVM, which Docker on macOS lacks. Behavior specific to 5.1 has to be checked on a Windows machine.
+
+The pwsh image is built from the official tarball for the host's architecture, because Microsoft's image is amd64-only and .NET segfaults under qemu on Apple Silicon. It also has zsh and jq, so `tests/test_sync.zsh` runs there, with zsh, bash 5 and pwsh side by side. That script compares `_clh_dump_data` output across versions: setting names/types/non-path defaults everywhere, and the request and fix examples between zsh and bash. It also feeds the zsh examples and a fixed history to `clh.ps1` and checks that it selects exactly what the jq ranking selects (keyword and all modes). System prompts differ per platform on purpose and are not compared.
 
 For interactive checks, run the shell inside `tmux` in the container (`tmux send-keys`, `tmux capture-pane -p`). pwsh queries the cursor position, so a raw pty without a terminal emulator hangs.
 
-There's no test runner and no way to filter tests. To run one case, source the plugin and call the function directly:
+There's no way to filter tests within a suite. To run one case, source the plugin and call the function directly (in the container: `docker run --rm -v $PWD:/clh clh-zsh zsh -c '…'`):
 
 ```sh
 zsh -c 'source ./clh.zsh; _clh_sanitize "\$ docker ps"'
 zsh -c 'source ./clh.zsh; local -a reply; _clh_parse "git log :: last 5"; print -l $reply'
 ```
 
-`eval.sh` only prints results; nothing is asserted. Read the output to judge it. The README's model-accuracy table (~21/25 for the default model) comes from this script.
+The evals only print results; nothing is asserted. Read the output to judge it. The README's model-accuracy table (~21/25 for the default model) comes from `tests/zsh/eval.zsh`.
 
 ## Architecture (all in `clh.zsh`)
 
@@ -68,5 +74,5 @@ zsh -c 'source ./clh.zsh; local -a reply; _clh_parse "git log :: last 5"; print 
 
 - Target environment is zsh on macOS with BSD tools. The system prompt tells the model to avoid GNU-only flags, and the plugin code should avoid them too.
 - Functions start with `emulate -L zsh` (plus `setopt extendedglob` where patterns need it). Internal names use the `_clh_` / `_CLH_` prefix. User config is `CLH_*`, declared in `_CLH_SETTINGS` (not with `: ${VAR:=default}`).
-- Widgets and keybindings are registered only under `[[ -o interactive ]]`. This is why the tests can `source clh.zsh` and call functions directly. `test_sanitize.zsh` unsets `CLH_*` and points `CLH_CONFIG_FILE` / `CLH_HISTORY_FILE` at a temp dir, so the user's saved settings and history never affect it.
-- When you change model behavior (prompts, examples, hints, danger regex, parsing), add a check to `tests/test_sanitize.zsh` for the deterministic part, and add a case to `tests/eval.sh` for the model-dependent part.
+- Widgets and keybindings are registered only under `[[ -o interactive ]]`. This is why the tests can `source clh.zsh` and call functions directly. `tests/zsh/test.zsh` unsets `CLH_*` and points `CLH_CONFIG_FILE` / `CLH_HISTORY_FILE` at a temp dir, so the user's saved settings and history never affect it.
+- When you change model behavior (prompts, examples, hints, danger regex, parsing), add a check to the shell's `tests/<shell>/test.*` for the deterministic part, and add a case to its `tests/<shell>/eval.*` for the model-dependent part.

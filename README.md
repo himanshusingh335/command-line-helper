@@ -116,21 +116,25 @@ Change these with `clh set` / `clh settings`, or set them before the `source` li
 
 ## Choosing a model
 
-Measured on an M-series Mac with `tests/eval.sh` (25 requests):
+Measured with the zsh eval (`tests/run.sh eval zsh`, 25 requests), with Ollama on an M-series Mac:
 
 | Model | Correct | Latency (warm) |
 |---|---|---|
 | `qwen2.5-coder:1.5b` (default) | ~21/25 | ~0.3s |
 | `qwen3.5:4b` | ~24/25 | ~4s |
 
-`qwen2.5-coder:3b` is a reasonable middle ground. To compare models: `CLH_MODEL=<model> ./tests/eval.sh`.
+`qwen2.5-coder:3b` is a reasonable middle ground. To compare models: `CLH_MODEL=<model> tests/run.sh eval zsh`.
 
 ## Tests
 
+Everything runs in Linux containers (Docker or OrbStack), with one folder and image per shell: `tests/zsh` (macOS), `tests/bash` (Linux), `tests/powershell` (Windows). Evals use the Ollama running on the host.
+
 ```sh
-zsh tests/test_sanitize.zsh   # unit tests (no model needed)
-./tests/eval.sh               # sample requests → generated commands
-zsh tests/bench_examples.zsh  # score example modes against the model (-v prints every answer)
-tests/run_containers.sh       # bash and PowerShell suites in Linux containers + version sync check (Docker/OrbStack)
-tests/run_containers.sh --eval  # also sample requests through clh.bash and clh.ps1 against the host's Ollama
+tests/run.sh                    # unit tests for every shell + version sync check (no model needed)
+tests/run.sh unit bash          # one shell: zsh, bash or powershell
+tests/run.sh eval               # sample requests → generated commands, per shell
+tests/run.sh bench -v           # zsh: score example modes against the model (-v prints every answer)
+tests/run.sh all                # all of the above
 ```
+
+The PowerShell container runs pwsh 7 on Linux with the Windows prompt; it can't stand in for Windows PowerShell 5.1.
