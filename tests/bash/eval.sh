@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run sample requests through the model with clh.bash and print the results
-# (nothing is asserted). Usually run via: tests/run_containers.sh --eval
-CLH_WARM=0 source "$(cd "$(dirname "$0")/.." && pwd)/clh.bash"
+# (nothing is asserted). Usually run via: tests/run.sh eval bash
+CLH_WARM=0 source "$(cd "$(dirname "$0")/../.." && pwd)/clh.bash"
 tmpdir=$(mktemp -d); trap 'rm -rf "$tmpdir"' EXIT
 CLH_HISTORY_FILE=$tmpdir/history.jsonl
 

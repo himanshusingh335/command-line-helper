@@ -1,9 +1,9 @@
 # Run sample requests through the model with clh.ps1 and print the results
-# (nothing is asserted). Usually run via: tests/run_containers.sh --eval
+# (nothing is asserted). Usually run via: tests/run.sh eval powershell
 $env:CLH_WARM = '0'
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ('clh-eval-' + [guid]::NewGuid())
 $env:CLH_HISTORY_FILE = Join-Path $tmp 'history.jsonl'
-. (Join-Path (Split-Path -Parent $PSScriptRoot) 'clh.ps1')
+. (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'clh.ps1')
 
 "platform: $($global:_ClhPlatform) ($(_clh_os_name))"
 $queries = @(

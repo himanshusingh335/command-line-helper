@@ -1,5 +1,5 @@
 # Unit tests for the deterministic parts of clh.ps1 (no model needed).
-#   pwsh -NoProfile -File tests/test_ps.ps1      (or tests/run_containers.sh)
+#   pwsh -NoProfile -File tests/powershell/test.ps1      (or tests/run.sh unit powershell)
 # Ignore the user's environment and saved settings, and keep every default
 # path (history, config) inside a temp dir.
 Get-ChildItem env:CLH_* -ErrorAction Ignore | Remove-Item
@@ -8,7 +8,7 @@ New-Item -ItemType Directory -Path $tmp | Out-Null
 $env:XDG_DATA_HOME = "$tmp/data"; $env:XDG_CONFIG_HOME = "$tmp/config"
 $env:LOCALAPPDATA = "$tmp/data"; $env:APPDATA = "$tmp/config"
 $env:CLH_CONFIG_FILE = "$tmp/config/clh/config.json"
-$plugin = Join-Path (Split-Path -Parent $PSScriptRoot) 'clh.ps1'
+$plugin = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'clh.ps1'
 . $plugin
 
 $script:fails = 0

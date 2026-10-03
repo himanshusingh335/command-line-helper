@@ -1,9 +1,9 @@
 #!/usr/bin/env zsh
 # Run sample requests through the model and print the generated commands.
-#   ./tests/eval.sh                      # default model
-#   CLH_MODEL=smollm2:1.7b ./tests/eval.sh
+#   tests/run.sh eval zsh                       # default model
+#   CLH_MODEL=smollm2:1.7b tests/run.sh eval zsh
 zmodload zsh/datetime
-CLH_WARM=0 source ${0:A:h}/../clh.zsh
+CLH_WARM=0 source ${0:A:h:h:h}/clh.zsh
 # Never read or write the real learned history.
 tmpdir=$(mktemp -d); trap 'rm -rf $tmpdir' EXIT
 CLH_HISTORY_FILE=$tmpdir/history.jsonl

@@ -1,11 +1,11 @@
 #!/usr/bin/env zsh
 # Compare few-shot selection modes against the real model and score the
 # results with accept patterns. Needs Ollama and `ollama pull nomic-embed-text`.
-#   zsh tests/bench_examples.zsh            # all modes
-#   zsh tests/bench_examples.zsh -v         # also print every answer
-#   CLH_MODEL=qwen3.5:4b zsh tests/bench_examples.zsh
+#   tests/run.sh bench zsh                  # all modes
+#   tests/run.sh bench zsh -v               # also print every answer
+#   CLH_MODEL=qwen3.5:4b tests/run.sh bench zsh
 zmodload zsh/datetime
-CLH_WARM=0 source ${0:A:h}/../clh.zsh
+CLH_WARM=0 source ${0:A:h:h:h}/clh.zsh
 verbose=0; [[ $1 == -v ]] && verbose=1
 
 tmpdir=$(mktemp -d); trap 'rm -rf $tmpdir' EXIT
