@@ -1,4 +1,4 @@
-# Unit tests for the deterministic parts of clh.ps1 (no model needed).
+﻿# Unit tests for the deterministic parts of clh.ps1 (no model needed).
 #   pwsh -NoProfile -File tests/powershell/test.ps1      (or tests/run.sh unit powershell)
 # Ignore the user's environment and saved settings, and keep every default
 # path (history, config) inside a temp dir.

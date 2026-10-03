@@ -1,0 +1,4 @@
+# Windows PowerShell 5.1 reads .ps1 files without a BOM as Windows-1252,
+# which turns the UTF-8 in "—" and "→" into quote characters.
+[*.ps1]
+charset = utf-8-bom

@@ -1,4 +1,4 @@
-# clh.ps1 — natural-language → shell command helper for PowerShell, powered by Ollama.
+﻿# clh.ps1 — natural-language → shell command helper for PowerShell, powered by Ollama.
 # The PowerShell port of clh.zsh (Windows; PowerShell 7+, best effort on 5.1).
 #
 #   :: <what you want>     Enter → the generated command replaces the line
