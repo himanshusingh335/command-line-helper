@@ -1,0 +1,16 @@
+#!/bin/sh
+# Stand-in for ollama in the installer tests: no download, no server. `serve`
+# marks the server as up, `list` fails until then, and `pull` records the model.
+# Every call is logged to $state/calls.
+state=${FAKE_OLLAMA_STATE:-/tmp/fake-ollama}
+mkdir -p "$state"
+echo "$*" >>"$state/calls"
+case $1 in
+  serve) touch "$state/up"; exec sleep 300 ;;
+  list) [ -f "$state/up" ] || { echo "Error: could not connect to ollama server" >&2; exit 1; }
+        echo "NAME    ID    SIZE    MODIFIED"
+        [ -f "$state/models" ] && sed 's/$/    abc123    1 GB    now/' "$state/models"
+        exit 0 ;;
+  pull) [ -f "$state/up" ] || exit 1; echo "$2" >>"$state/models" ;;
+  -v|--version) echo "ollama version is 0.0.0-fake" ;;
+esac

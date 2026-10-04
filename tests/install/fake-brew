@@ -1,0 +1,13 @@
+#!/bin/sh
+# Stand-in for Homebrew in the macOS installer test (Debian with CLH_OS=macos):
+# logs calls and "installs" a formula by symlinking the real tool, or the fake
+# ollama, into /usr/local/bin.
+echo "$*" >>/tmp/fake-brew.calls
+[ "$1" = install ] || exit 0
+shift
+for f in "$@"; do
+  case $f in
+    ollama) ln -sf /clh/tests/install/fake-ollama /usr/local/bin/ollama ;;
+    *) ln -sf "/opt/real/$f" "/usr/local/bin/$f" ;;
+  esac
+done
