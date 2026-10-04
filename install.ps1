@@ -19,7 +19,17 @@ param([string]$Model, [switch]$NoModel, [switch]$Yes, [switch]$Uninstall)
   param([string]$Model, [bool]$NoModel, [bool]$Yes, [bool]$Uninstall)
   $ErrorActionPreference = 'Stop'
   $repo = 'himanshusingh335/command-line-helper'
-  if (-not $Model) { $Model = if ($env:CLH_MODEL) { $env:CLH_MODEL } else { 'qwen2.5-coder:1.5b' } }
+  # -Model, else CLH_MODEL, else the model saved with `clh set model`, else the default.
+  $modelNote = ''
+  if (-not $Model) { $Model = $env:CLH_MODEL }
+  if (-not $Model) {
+    $cfg = if ($env:CLH_CONFIG_FILE) { $env:CLH_CONFIG_FILE }
+           elseif (($PSVersionTable.PSEdition -eq 'Desktop') -or $IsWindows) { Join-Path $env:APPDATA 'clh\config.json' }
+           else { Join-Path $(if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $HOME '.config' }) 'clh/config.json' }
+    try { $Model = "$(([IO.File]::ReadAllText($cfg) | ConvertFrom-Json).CLH_MODEL)".Trim() } catch { }
+    if ($Model) { $modelNote = ' (saved with clh set)' }
+  }
+  if (-not $Model) { $Model = 'qwen2.5-coder:1.5b' }
   $url = if ($env:CLH_URL) { $env:CLH_URL } else { 'http://localhost:11434' }
   $srcUrl = if ($env:CLH_SRC_URL) { $env:CLH_SRC_URL } else { "https://github.com/$repo/archive/refs/heads/main.zip" }
   $isWin = ($PSVersionTable.PSEdition -eq 'Desktop') -or $IsWindows
@@ -118,7 +128,7 @@ param([string]$Model, [switch]$NoModel, [switch]$Yes, [switch]$Uninstall)
   if ($needReadLine) { Write-Host '  install the PSReadLine module' }
   if ($fixPolicy) { Write-Host "  set execution policy to RemoteSigned for your user (now $policy), so your profile can load" }
   if ($remote) { Write-Host "  download clh to $src" }
-  if (-not $NoModel) { Write-Host "  pull model $Model" }
+  if (-not $NoModel) { Write-Host "  pull model $Model$modelNote" }
   foreach ($p in $profileList) { Write-Host "  add clh to $p" }
   if (-not $Yes -and [Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
     $a = Read-Host 'Continue? [Y/n]'

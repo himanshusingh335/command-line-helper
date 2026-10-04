@@ -10,6 +10,8 @@
 #          --uninstall (remove the hook; leaves Ollama, the model and history),
 #          --ollama-only (just install Ollama and what it needs; install.ps1
 #          uses this on Linux and macOS).
+# The model is --model, else CLH_MODEL, else the one saved with `clh set model`,
+# else the default.
 # Environment: CLH_MODEL, CLH_URL (a remote Ollama: nothing is installed for it).
 # For tests: CLH_OS (macos|linux|gitbash), CLH_SRC_URL (repo tarball),
 #            CLH_OLLAMA_SCRIPT (Ollama's Linux install script).
@@ -18,7 +20,7 @@
 set -u
 
 repo=himanshusingh335/command-line-helper
-model=${CLH_MODEL:-qwen2.5-coder:1.5b}
+model=${CLH_MODEL:-}
 url=${CLH_URL:-http://localhost:11434}
 src_url=${CLH_SRC_URL:-https://github.com/$repo/archive/refs/heads/main.tar.gz}
 ollama_script=${CLH_OLLAMA_SCRIPT:-https://ollama.com/install.sh}
@@ -26,7 +28,7 @@ data=${XDG_DATA_HOME:-$HOME/.local/share}/clh
 begin='# >>> command-line-helper >>>'
 end='# <<< command-line-helper <<<'
 
-shells='' yes=0 pull=1 uninstall=0 ollama_only=0
+shells='' yes=0 pull=1 uninstall=0 ollama_only=0 model_note=''
 usage() { echo "usage: install.sh [--shell zsh|bash|all] [--model NAME] [--no-model] [-y] [--uninstall]"; }
 while [ $# -gt 0 ]; do
   case $1 in
@@ -143,6 +145,23 @@ if [ -z "$shells" ] && [ $ollama_only = 0 ]; then
   esac
 fi
 
+# The model saved by `clh set model` for one of these shells. The config file
+# holds NAME=value lines quoted by zsh's ${(q)} or bash's %q; model names need
+# no more unquoting than dropping backslashes and quotes.
+saved_model() {
+  for sh in $shells; do
+    f=${CLH_CONFIG_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/clh/config.$sh}
+    [ -r "$f" ] || continue
+    m=$(sed -n 's/^CLH_MODEL=//p' "$f" | tail -n 1 | sed -e 's/^\$//' -e "s/[\\'\"]//g" -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+    [ -n "$m" ] && { echo "$m"; return; }
+  done
+}
+if [ -z "$model" ] && [ $ollama_only = 0 ]; then
+  model=$(saved_model)
+  [ -n "$model" ] && model_note=" (saved with clh set)"
+fi
+model=${model:-qwen2.5-coder:1.5b}
+
 # ---- source files -----------------------------------------------------------
 
 # A checkout has clh.zsh next to this script. When piped from curl, $0 is the
@@ -212,7 +231,7 @@ step "clh installer — $os${pm:+, packages via ${pm#install-}}"
 [ -n "$pkgs" ] && echo "  install: $pkgs"
 [ -n "$ollama_how" ] && echo "  install Ollama ($ollama_how)"
 [ $remote = 1 ] && echo "  download clh to $src"
-[ $pull = 1 ] && echo "  pull model $model"
+[ $pull = 1 ] && echo "  pull model $model$model_note"
 for sh in $shells; do echo "  add clh to $(rc_file $sh)"; done
 [ -n "$notes" ] && echo "note:$notes"
 if [ $yes = 0 ] && has_tty; then

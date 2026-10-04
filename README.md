@@ -34,7 +34,7 @@ irm https://raw.githubusercontent.com/himanshusingh335/command-line-helper/main/
 The installer works out your system and shell, shows what it is going to do, asks once, and then:
 
 - installs what is missing: `curl` and `jq` with your package manager (Homebrew, apt, dnf, yum, zypper, pacman, apk, or winget in Git Bash), zsh or bash 4+ if needed, and Ollama (Homebrew on macOS, Ollama's install script on Linux, winget/scoop/choco or Ollama's setup on Windows)
-- starts Ollama if it isn't running and pulls the model
+- starts Ollama if it isn't running and pulls the model: `--model`, else `CLH_MODEL`, else the one you saved with `clh set model`, else the default
 - adds clh to `~/.zshrc` or `~/.bashrc` (PowerShell: `$PROFILE`, for both Windows PowerShell 5.1 and PowerShell 7 when both are installed), inside a `# >>> command-line-helper >>>` block
 - PowerShell only: installs PSReadLine if it is missing and, if scripts are blocked, sets the execution policy to `RemoteSigned` for your user so the profile can load
 

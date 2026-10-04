@@ -82,4 +82,15 @@ out=$(cd /tmp && sh -s -- --uninstall </clh/install.sh 2>&1)
 check "uninstall removes the block" [ "$(blocks "$rc")" = 0 ]
 check "uninstall removes the download" [ ! -d "$src" ]
 check "uninstall keeps user lines" grep -qx "export KEEP=1" "$rc"
+
+# A model saved with `clh set model` (quoted as the plugin writes it) is the
+# one pulled, unless --model says otherwise.
+if [ $mode = fake ]; then
+  mkdir -p "$HOME/.config/clh"
+  printf '# clh settings\nCLH_MODEL=saved\\ model:2b\\ \\ \n' >"$HOME/.config/clh/config.$target"
+  install "install with a saved model" --yes --shell $target
+  check "saved model pulled" grep -qx "pull saved model:2b" "$calls"
+  install "install with --model" --yes --shell $target --model other:1b
+  check "--model wins over the saved model" grep -qx "pull other:1b" "$calls"
+fi
 exit $fail

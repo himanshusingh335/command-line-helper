@@ -60,4 +60,12 @@ run 'uninstall via scriptblock' '& ([scriptblock]::Create((Get-Content -Raw /clh
 check 'uninstall removes the block' { (blocks) -eq 0 }
 check 'uninstall removes the download' { -not (Test-Path $src) }
 check 'uninstall keeps user lines' { (Get-Content $prof) -contains '$KEEP = 1' }
+
+# A model saved with `clh set model` is the one pulled, unless -Model says otherwise.
+New-Item -ItemType Directory -Path (Join-Path $HOME '.config/clh') -Force | Out-Null
+Set-Content (Join-Path $HOME '.config/clh/config.json') '{ "CLH_MODEL": "saved model:2b " }'
+run 'install with a saved model' '& /clh/install.ps1 -Yes'
+check 'saved model pulled' { (Get-Content $calls) -contains 'pull saved model:2b' }
+run 'install with -Model' '& /clh/install.ps1 -Yes -Model other:1b'
+check '-Model wins over the saved model' { (Get-Content $calls) -contains 'pull other:1b' }
 exit $script:fail
