@@ -167,8 +167,6 @@ elif [ $os = gitbash ]; then
   need jq jqlang.jq
 else
   need curl
-  # Debian's slim images have no CA certificates, so https would fail.
-  [ "$pm" = apt-get ] && [ ! -f /etc/ssl/certs/ca-certificates.crt ] && add_pkg ca-certificates
   need jq
   [ $remote = 1 ] && { need tar; need gzip; }
   for sh in $shells; do
@@ -178,6 +176,9 @@ else
     esac
   done
 fi
+
+# Debian's slim images have no CA certificates, so https would fail.
+[ "$pm" = apt-get ] && [ ! -f /etc/ssl/certs/ca-certificates.crt ] && add_pkg ca-certificates
 
 ollama_how=''
 if [ $local_ollama = 1 ] && ! have ollama; then
@@ -198,7 +199,7 @@ fi
 [ $os = macos ] && [ -z "$pm" ] && { [ -n "$pkgs" ] || [ "$ollama_how" = brew ]; } && pm=install-brew
 
 if [ $os = linux ] && [ -n "$pkgs$ollama_how" ] && [ "$(id -u)" != 0 ] && [ -z "$sudo" ]; then
-  die "need root to install ${pkgs:-ollama}${ollama_how:+ ollama}: run as root or install sudo"
+  die "need root to install ${pkgs}${ollama_how:+${pkgs:+ }ollama}: run as root or install sudo"
 fi
 if [ -n "$pkgs" ] && [ -z "$pm" ]; then
   die "can't find a package manager; install these yourself and re-run: $pkgs"
