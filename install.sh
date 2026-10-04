@@ -7,7 +7,9 @@
 #   curl -fsSL https://raw.githubusercontent.com/himanshusingh335/command-line-helper/main/install.sh | sh
 #
 # Options: --shell zsh|bash|all, --model NAME, --no-model, -y/--yes (don't ask),
-#          --uninstall (remove the hook; leaves Ollama, the model and history).
+#          --uninstall (remove the hook; leaves Ollama, the model and history),
+#          --ollama-only (just install Ollama and what it needs; install.ps1
+#          uses this on Linux and macOS).
 # Environment: CLH_MODEL, CLH_URL (a remote Ollama: nothing is installed for it).
 # For tests: CLH_OS (macos|linux|gitbash), CLH_SRC_URL (repo tarball),
 #            CLH_OLLAMA_SCRIPT (Ollama's Linux install script).
@@ -24,7 +26,7 @@ data=${XDG_DATA_HOME:-$HOME/.local/share}/clh
 begin='# >>> command-line-helper >>>'
 end='# <<< command-line-helper <<<'
 
-shells='' yes=0 pull=1 uninstall=0
+shells='' yes=0 pull=1 uninstall=0 ollama_only=0
 usage() { echo "usage: install.sh [--shell zsh|bash|all] [--model NAME] [--no-model] [-y] [--uninstall]"; }
 while [ $# -gt 0 ]; do
   case $1 in
@@ -35,6 +37,7 @@ while [ $# -gt 0 ]; do
     --no-model) pull=0 ;;
     -y|--yes) yes=1 ;;
     --uninstall) uninstall=1 ;;
+    --ollama-only) ollama_only=1 pull=0 ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
   esac
@@ -128,7 +131,7 @@ hostport=${url#*://}; hostport=${hostport%%/*}
 case ${hostport%:*} in localhost|127.0.0.1|0.0.0.0) local_ollama=1 ;; *) local_ollama=0 ;; esac
 
 # Which shells: --shell, else the login shell, else whichever exists.
-if [ -z "$shells" ]; then
+if [ -z "$shells" ] && [ $ollama_only = 0 ]; then
   login=${SHELL:-}
   case ${login##*/} in
     zsh) shells=zsh ;;
@@ -145,7 +148,8 @@ fi
 # A checkout has clh.zsh next to this script. When piped from curl, $0 is the
 # shell, so the repo is downloaded to $data/src instead.
 here=$(cd "$(dirname "$0")" 2>/dev/null && pwd)
-if [ -n "$here" ] && [ -f "$here/clh.zsh" ] && [ -f "$here/clh.bash" ]; then src=$here remote=0
+if [ $ollama_only = 1 ] || { [ -n "$here" ] && [ -f "$here/clh.zsh" ] && [ -f "$here/clh.bash" ]; }; then
+  src=$here remote=0
 else src=$data/src remote=1; fi
 
 # ---- what is missing --------------------------------------------------------
@@ -157,7 +161,9 @@ need() { have "$1" || add_pkg "${2:-$1}"; }
 
 bash_ok() { have bash && [ "$(bash -c 'echo "${BASH_VERSINFO[0]}"' 2>/dev/null || echo 0)" -ge 4 ]; }
 
-if [ $os = gitbash ]; then
+if [ $ollama_only = 1 ]; then
+  [ $os = linux ] && need curl
+elif [ $os = gitbash ]; then
   need jq jqlang.jq
 else
   need curl
@@ -324,6 +330,7 @@ case " $shells " in *" bash "*)
   fi ;;
 esac
 
+if [ $ollama_only = 1 ]; then step "done"; exit 0; fi
 echo
 step "done. Start a new terminal, or run:"
 for sh in $shells; do echo "  source $(rc_file $sh)    # $sh"; done
