@@ -1,4 +1,4 @@
-﻿# Install clh for PowerShell: installs Ollama if it is missing (winget, scoop,
+# Install clh for PowerShell: installs Ollama if it is missing (winget, scoop,
 # choco or Ollama's setup on Windows), pulls the model and dot-sources clh.ps1
 # from your profile.
 #
@@ -10,6 +10,11 @@
 # profile hook; leaves Ollama, the model and history).
 # Environment: CLH_MODEL, CLH_URL (a remote Ollama: nothing is installed for it).
 # For tests: CLH_SRC_URL (repo zip); install.sh's variables are passed on to it.
+#
+# Keep this file ASCII without a BOM. Windows PowerShell 5.1's `irm` decodes it
+# as Latin-1, which turns a BOM into "i>>?" glued to the first "#", and the whole
+# script fails to parse. (clh.ps1 is different: it is read from disk and needs
+# its BOM.)
 param([string]$Model, [switch]$NoModel, [switch]$Yes, [switch]$Uninstall)
 
 # Everything runs in a child scope: with `irm | iex` the script runs in the
@@ -56,7 +61,7 @@ param([string]$Model, [switch]$NoModel, [switch]$Yes, [switch]$Uninstall)
   }
 
   # Replace the clh block in a profile with $lines (none: remove it). Also drops
-  # what older installers added: the comment line and ". '…clh.ps1'".
+  # what older installers added: the comment line and ". '...clh.ps1'".
   function set_hook([string]$file, [string[]]$lines) {
     if (-not (Test-Path -LiteralPath $file)) {
       if (-not $lines) { return }
@@ -123,7 +128,7 @@ param([string]$Model, [switch]$NoModel, [switch]$Yes, [switch]$Uninstall)
   $needReadLine = -not (Get-Module -ListAvailable PSReadLine)
   $profileList = profiles
 
-  step "clh installer — PowerShell $($PSVersionTable.PSVersion) on $(if ($isWin) { 'Windows' } elseif ($IsMacOS) { 'macOS' } else { 'Linux' })"
+  step "clh installer - PowerShell $($PSVersionTable.PSVersion) on $(if ($isWin) { 'Windows' } elseif ($IsMacOS) { 'macOS' } else { 'Linux' })"
   if ($ollamaHow) { Write-Host "  install Ollama ($ollamaHow)" }
   if ($needReadLine) { Write-Host '  install the PSReadLine module' }
   if ($fixPolicy) { Write-Host "  set execution policy to RemoteSigned for your user (now $policy), so your profile can load" }

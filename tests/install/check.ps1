@@ -44,19 +44,26 @@ check 'old line removed' { -not (Select-String -LiteralPath $prof -Pattern '/old
 check 'user lines kept' { $c = Get-Content $prof; ($c -contains '$KEEP = 1') -and ($c -contains 'Set-Alias ll Get-ChildItem') }
 check 'one clh block after migration' { (blocks) -eq 1 }
 
+# Windows PowerShell 5.1's irm decodes the download as Latin-1, so the script
+# must survive that: no BOM and nothing outside ASCII. The iex tests below read
+# it the same way.
+$bytes = [IO.File]::ReadAllBytes('/clh/install.ps1')
+check 'install.ps1 is ASCII without a BOM' { -not ($bytes | Where-Object { $_ -gt 127 }) }
+$latin1 = '[Text.Encoding]::GetEncoding(28591).GetString([IO.File]::ReadAllBytes(''/clh/install.ps1''))'
+
 # irm | iex: no checkout next to the script, so the repo zip is downloaded.
 $pkg = Join-Path ([IO.Path]::GetTempPath()) 'clh-pkg'
 New-Item -ItemType Directory -Path "$pkg/command-line-helper-main" -Force | Out-Null
 Copy-Item /clh/clh.ps1, /clh/install.ps1, /clh/install.sh "$pkg/command-line-helper-main/"
 Compress-Archive -Path "$pkg/command-line-helper-main" -DestinationPath "$pkg/src.zip" -Force
 $src = Join-Path $HOME '.local/share/clh/src'
-run 'install via iex' "`$env:CLH_SRC_URL = 'file://$pkg/src.zip'; Get-Content -Raw /clh/install.ps1 | Invoke-Expression; if (`$ErrorActionPreference -ne 'Continue') { throw 'leaked ErrorActionPreference' }"
+run 'install via iex' "`$env:CLH_SRC_URL = 'file://$pkg/src.zip'; $latin1 | Invoke-Expression; if (`$ErrorActionPreference -ne 'Continue') { throw 'leaked ErrorActionPreference' }"
 check "repo downloaded to $src" { Test-Path "$src/clh.ps1" }
 check 'block dot-sources the download' { (Get-Content $prof) -contains ". '$src/clh.ps1'" }
 check 'one clh block after iex install' { (blocks) -eq 1 }
 check 'clh loads from the download' { loads }
 
-run 'uninstall via scriptblock' '& ([scriptblock]::Create((Get-Content -Raw /clh/install.ps1))) -Uninstall'
+run 'uninstall via scriptblock' "& ([scriptblock]::Create(($latin1))) -Uninstall"
 check 'uninstall removes the block' { (blocks) -eq 0 }
 check 'uninstall removes the download' { -not (Test-Path $src) }
 check 'uninstall keeps user lines' { (Get-Content $prof) -contains '$KEEP = 1' }
