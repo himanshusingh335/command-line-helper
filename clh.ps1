@@ -525,7 +525,8 @@ function _clh_start_server {
     } else {
       $log = $global:CLH_OLLAMA_LOG
       New-Item -ItemType Directory -Path (Split-Path -Parent $log) -Force | Out-Null
-      Start-Process -FilePath sh -ArgumentList '-c', "nohup ollama serve >>'$log' 2>&1 &" | Out-Null
+      # A direct call: Start-Process joins -ArgumentList unquoted, so sh would get just "nohup".
+      sh -c "nohup ollama serve >>'$log' 2>&1 </dev/null &"
     }
   } finally { $env:OLLAMA_HOST = $old }
   # On first start Ollama can spend ~20s detecting the GPU before answering.
