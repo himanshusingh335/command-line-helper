@@ -460,8 +460,9 @@ _clh_setting() {
 
 # Print a value normalized for a setting type, or fail if it doesn't fit.
 _clh_check_value() {
-  emulate -L zsh
-  local t=$1 v=$2
+  emulate -L zsh -o extendedglob
+  # Spaces around a value typed into `clh settings` would otherwise be saved.
+  local t=$1 v=${${2##[[:space:]]#}%%[[:space:]]#}
   case $t in
     bool)
       case ${(L)v} in

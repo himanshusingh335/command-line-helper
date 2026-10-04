@@ -581,6 +581,8 @@ function _clh_setting([string]$name) {
 
 # A value normalized for a setting type, or $null if it doesn't fit.
 function _clh_check_value([string]$t, [string]$v) {
+  # Spaces around a value typed into `clh settings` would otherwise be saved.
+  $v = $v.Trim()
   switch ($t) {
     'bool' {
       if (@('1','on','true','yes') -contains $v) { return '1' }

@@ -125,6 +125,7 @@ function value($t, $v) { $r = _clh_check_value $t $v; if ($null -eq $r) { 'bad' 
 check "$(value bool on),$(value bool False),$(value bool 2)"   '1,0,bad'     value-bool
 check "$(value int 12),$(value int 0),$(value int x)"          '12,bad,bad'  value-int
 check "$(value 'all|keyword|embed' embed),$(value 'all|keyword|embed' em),$(value 'all|keyword|embed' 'all|embed')" 'embed,bad,bad' value-enum
+check "[$(value str '  qwen:3b  ')],$(value bool ' on '),$(value str '   ')"   '[qwen:3b],1,bad'  value-trimmed
 
 clh set model 'my model:7b' | Out-Null
 clh set learn off | Out-Null
