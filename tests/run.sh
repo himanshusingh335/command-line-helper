@@ -7,6 +7,8 @@
 #   tests/run.sh eval zsh powershell     # sample requests against the host's Ollama
 #   tests/run.sh bench -v                # score example modes (zsh only)
 #   tests/run.sh all                     # unit, eval and bench
+#   tests/run.sh install                 # installers in fresh distro containers (fake Ollama)
+#   tests/run.sh install --real          # also a real Ollama install + model pull (~2 GB)
 #   CLH_MODEL=qwen3.5:4b tests/run.sh eval zsh
 # Arguments starting with - are passed on to the scripts (bench -v).
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -16,10 +18,10 @@ container_url=http://host.docker.internal:11434
 suite=unit shells=() args=()
 for a in "$@"; do
   case $a in
-    unit|eval|bench|all) suite=$a ;;
+    unit|eval|bench|all|install) suite=$a ;;
     zsh|bash|powershell) shells+=("$a") ;;
     -*) args+=("$a") ;;
-    *) echo "usage: tests/run.sh [unit|eval|bench|all] [zsh|bash|powershell]... [-v]" >&2; exit 2 ;;
+    *) echo "usage: tests/run.sh [unit|eval|bench|all|install] [zsh|bash|powershell]... [-v|--real]" >&2; exit 2 ;;
   esac
 done
 all_shells=0
@@ -62,10 +64,46 @@ need_ollama() {
   exit 1
 }
 
+# Installer cases: label|image|shell|mode|setup|platform. Stock images have
+# nothing installed; check.sh runs with POSIX sh. Arch's image is amd64-only,
+# and pacman's sandbox can't start in a container.
+install_cases() {
+  cat <<'EOF'
+Debian (apt, bash)|debian:stable-slim|bash|fake||
+Ubuntu (apt, zsh)|ubuntu:24.04|zsh|fake||
+Fedora (dnf, bash)|fedora:latest|bash|fake||
+openSUSE (zypper, zsh)|opensuse/tumbleweed:latest|zsh|fake||
+Arch (pacman, bash)|archlinux:latest|bash|fake|sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf|linux/amd64
+Alpine (apk, no Ollama for musl)|alpine:latest|bash|no-ollama||
+Debian as a user with sudo|clh-install-sudo|bash|fake||
+macOS path, fake Homebrew (zsh)|clh-install-macos|zsh|fake||
+macOS path, fake Homebrew (bash)|clh-install-macos|bash|fake||
+EOF
+  [[ " ${args[*]-} " == *" --real "* ]] && echo "Debian, real Ollama + model|debian:stable-slim|bash|real||"
+}
+run_install() {
+  local label image sh mode setup platform out
+  docker build -q -t clh-install-sudo -f "$root/tests/docker/install-sudo.Dockerfile" "$root/tests/docker" >/dev/null \
+    && docker build -q -t clh-install-macos -f "$root/tests/docker/install-macos.Dockerfile" "$root/tests/docker" >/dev/null \
+    || { echo "failed to build installer images" >&2; exit 1; }
+  while IFS='|' read -r label image sh mode setup platform; do
+    [[ " ${shells[*]} " == *" $sh "* ]] || continue
+    echo "--- install: $label"
+    out=$(docker run --rm ${platform:+--platform "$platform"} -v "$root:/clh:ro" "$image" \
+            sh -c "${setup:+$setup && }sh /clh/tests/install/check.sh $sh $mode" 2>&1) || status=1
+    grep -v '^ok' <<<"$out"
+  done < <(install_cases)
+  if [[ " ${shells[*]} " == *" powershell "* ]]; then
+    echo "--- install: PowerShell 7 on Linux (install.ps1)"
+    out=$(run powershell pwsh -NoProfile -File tests/install/check.ps1) || status=1
+    grep -v '^ok' <<<"$out"
+  fi
+}
+
 needed=("${shells[@]}")
 [[ $suite == unit || $suite == all ]] && (( all_shells )) && needed+=(powershell)
 for sh in $(printf '%s\n' "${needed[@]}" | sort -u); do build "$sh"; done
-[[ $suite != unit ]] && need_ollama
+[[ $suite != unit && $suite != install ]] && need_ollama
 
 status=0
 if [[ $suite == unit || $suite == all ]]; then
@@ -95,4 +133,5 @@ if [[ $suite == bench || $suite == all ]]; then
     echo "--- bench exists only for zsh; skipped"
   fi
 fi
+[[ $suite == install ]] && run_install
 exit $status

@@ -3,6 +3,8 @@
 # fake-ollama-install.sh. Prints ok / not ok lines; exits 1 on any failure.
 $ErrorActionPreference = 'Stop'
 $model = 'qwen2.5-coder:1.5b'
+# tests/run.sh points CLH_URL at the host's Ollama; this test needs a local (fake) one.
+Remove-Item Env:CLH_URL, Env:CLH_MODEL -ErrorAction Ignore
 $begin = '# >>> command-line-helper >>>'
 $env:FAKE_OLLAMA_STATE = Join-Path $HOME '.fake-ollama'
 $env:CLH_OLLAMA_SCRIPT = 'file:///clh/tests/install/fake-ollama-install.sh'
