@@ -6,9 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A shell plugin that turns plain-English requests into shell commands using a local Ollama model. Runtime deps: `curl`, `jq`, `ollama`. There is no build step. It comes in self-contained versions, one file per shell:
 
-- `clh.zsh`: zsh on macOS, the reference version. `install.sh` checks the dependencies, pulls the model and appends the `source` line to `~/.zshrc`.
-- `clh.bash`: bash 4+ on Linux, WSL and Git Bash. A function-by-function port with the same names, so the two files read side by side. `install-bash.sh` installs it into `~/.bashrc`.
-- `clh.ps1`: PowerShell (Windows first). Same function names, but no curl/jq: `Invoke-RestMethod`, `ConvertTo-Json`, and the example ranking reimplemented in PowerShell. Its prompts, examples, fix examples and danger regex are PowerShell-specific. `install.ps1` dot-sources it from `$PROFILE`.
+- `clh.zsh`: zsh on macOS, the reference version.
+- `clh.bash`: bash 4+ on Linux, WSL and Git Bash. A function-by-function port with the same names, so the two files read side by side.
+- `clh.ps1`: PowerShell (Windows first). Same function names, but no curl/jq: `Invoke-RestMethod`, `ConvertTo-Json`, and the example ranking reimplemented in PowerShell. Its prompts, examples, fix examples and danger regex are PowerShell-specific.
+
+Installers: `install.sh` (POSIX sh, so it runs piped from curl under dash/ash/bash 3.2) detects the platform (`uname`), package manager and login shell, installs missing deps and Ollama, pulls the model and writes a `# >>> command-line-helper >>>` block into `~/.zshrc`/`~/.bashrc`, replacing an earlier block or the old-style `source` line. Without a checkout next to it, it downloads the repo tarball to `~/.local/share/clh/src`. `install-bash.sh` is a shim for `install.sh --shell bash`. `install.ps1` does the same for `$PROFILE`; it runs everything in a child scriptblock and throws instead of `exit` because `irm | iex` runs it in the user's session, and off Windows it calls `install.sh --ollama-only`. Test hooks: `CLH_OS`, `CLH_SRC_URL`, `CLH_OLLAMA_SCRIPT`.
 
 A change to behavior in one version usually belongs in the others too.
 
@@ -21,6 +23,8 @@ tests/run.sh eval                         # sample requests through every versio
 CLH_MODEL=qwen3.5:4b tests/run.sh eval zsh  # compare another model (CLH_MODEL, CLH_EXAMPLE_MODE, CLH_EMBED_MODEL are passed through)
 tests/run.sh bench -v                     # zsh only: scores CLH_EXAMPLE_MODE all/keyword/embed with accept patterns
 tests/run.sh all                          # unit, eval and bench
+tests/run.sh install                      # installers in stock distro images + install.ps1 on pwsh (fake Ollama)
+tests/run.sh install --real               # adds a real Ollama install + model pull in Debian (~2 GB)
 ```
 
 All tests, evals and benches run in Linux containers (Docker/OrbStack). The host only needs Docker, plus Ollama for eval/bench. The containers reach Ollama at `http://host.docker.internal:11434`. Each shell has a folder for its platform and an image in `tests/docker/`:
@@ -30,6 +34,8 @@ All tests, evals and benches run in Linux containers (Docker/OrbStack). The host
 - `tests/powershell/` (Windows): `test.ps1`, `eval.ps1` in `clh-pwsh` (pwsh 7 on Linux). `eval.ps1` loads `clh.ps1` with `_ClhIsWindows` forced to true, so the model gets the Windows prompt. No container runs real Windows or Windows PowerShell 5.1: Windows containers need a Windows host, and dockur/windows needs KVM, which Docker on macOS lacks. Behavior specific to 5.1 has to be checked on a Windows machine.
 
 The pwsh image is built from the official tarball for the host's architecture, because Microsoft's image is amd64-only and .NET segfaults under qemu on Apple Silicon. It also has zsh and jq, so `tests/test_sync.zsh` runs there, with zsh, bash 5 and pwsh side by side. That script compares `_clh_dump_data` output across versions: setting names/types/non-path defaults everywhere, and the request and fix examples between zsh and bash. It also feeds the zsh examples and a fixed history to `clh.ps1` and checks that it selects exactly what the jq ranking selects (keyword and all modes). System prompts differ per platform on purpose and are not compared.
+
+`tests/install/` holds the installer tests. `check.sh` runs under plain `sh` in stock images (nothing preinstalled) and installs from the read-only checkout, re-runs, migrates an old-style hook, installs piped with a local tarball, and uninstalls. `fake-ollama` replaces Ollama (`serve` sets a flag, `list` fails until then, `pull` records the model); `fake-ollama-install.sh` stands in for Ollama's script and checks for the tools that script needs. The macOS path runs in `clh-install-macos` (Debian, `CLH_OS=macos`, `fake-brew`). Arch runs as linux/amd64 with pacman's `DisableSandbox`, which containers need.
 
 For interactive checks, run the shell inside `tmux` in the container (`tmux send-keys`, `tmux capture-pane -p`). pwsh queries the cursor position, so a raw pty without a terminal emulator hangs.
 

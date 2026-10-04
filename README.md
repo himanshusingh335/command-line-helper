@@ -19,22 +19,38 @@ Each file is self-contained, and the prompts are tuned for the platform: BSD too
 
 ## Install
 
-```sh
-./install.sh        # zsh: checks curl/jq/ollama, pulls the model, adds a `source` line to ~/.zshrc
-source ~/.zshrc
+macOS, Linux, WSL and Git Bash:
 
-./install-bash.sh   # bash: the same for ~/.bashrc (needs bash 4+; macOS ships 3.2)
-source ~/.bashrc
+```sh
+curl -fsSL https://raw.githubusercontent.com/himanshusingh335/command-line-helper/main/install.sh | sh
 ```
 
-On Windows, install [Ollama](https://ollama.com/download) (`winget install Ollama.Ollama`), then in PowerShell:
+Windows (PowerShell):
 
 ```powershell
-pwsh -ExecutionPolicy Bypass -File .\install.ps1   # pulls the model, dot-sources clh.ps1 from $PROFILE
-. $PROFILE
+irm https://raw.githubusercontent.com/himanshusingh335/command-line-helper/main/install.ps1 | iex
 ```
 
-The PowerShell version needs no curl or jq. If your profile switches PSReadLine's edit mode (`Set-PSReadLineOption -EditMode ...`), put the clh line after it.
+The installer works out your system and shell, shows what it is going to do, asks once, and then:
+
+- installs what is missing: `curl` and `jq` with your package manager (Homebrew, apt, dnf, yum, zypper, pacman, apk, or winget in Git Bash), zsh or bash 4+ if needed, and Ollama (Homebrew on macOS, Ollama's install script on Linux, winget/scoop/choco or Ollama's setup on Windows)
+- starts Ollama if it isn't running and pulls the model
+- adds clh to `~/.zshrc` or `~/.bashrc` (PowerShell: `$PROFILE`, for both Windows PowerShell 5.1 and PowerShell 7 when both are installed), inside a `# >>> command-line-helper >>>` block
+- PowerShell only: installs PSReadLine if it is missing and, if scripts are blocked, sets the execution policy to `RemoteSigned` for your user so the profile can load
+
+Then open a new terminal and try `:: list files changed in the last day`. Running the installer again updates clh and leaves everything else as it is.
+
+From a checkout, run `./install.sh` (or `pwsh -ExecutionPolicy Bypass -File .\install.ps1`); the hook then points at the checkout instead of a download in `~/.local/share/clh/src`.
+
+| `install.sh` | `install.ps1` | |
+|---|---|---|
+| `--shell zsh\|bash\|all` | | which shell to set up (default: your login shell) |
+| `--model NAME` | `-Model NAME` | model to pull (also `CLH_MODEL`) |
+| `--no-model` | `-NoModel` | don't pull a model |
+| `-y`, `--yes` | `-Yes` | don't ask |
+| `--uninstall` | `-Uninstall` | remove the hook (keeps Ollama, models and learned commands) |
+
+To pass options to the one-liners: `curl -fsSL …/install.sh | sh -s -- --uninstall`, or in PowerShell `& ([scriptblock]::Create((irm …/install.ps1))) -Uninstall`. With `CLH_URL` set to Ollama on another machine, nothing is installed for Ollama and the model is pulled there. Ollama has no build for Alpine (musl); the installer says so and sets up the rest. On macOS, bash users get Homebrew's bash 4+ (macOS ships 3.2) and a hint for making it the login shell. If your PowerShell profile switches PSReadLine's edit mode (`Set-PSReadLineOption -EditMode ...`), keep the clh block after it.
 
 If Ollama isn't running, the first `::` starts it (`ollama serve` in the background, detached from the terminal, logging to `~/.ollama/clh-serve.log`). The first start can take up to about 20s. Set `CLH_AUTOSTART=0` to turn this off. Ollama is only started for a local `CLH_URL`.
 
@@ -135,6 +151,11 @@ tests/run.sh unit bash          # one shell: zsh, bash or powershell
 tests/run.sh eval               # sample requests → generated commands, per shell
 tests/run.sh bench -v           # zsh: score example modes against the model (-v prints every answer)
 tests/run.sh all                # all of the above
+tests/run.sh install            # installers in fresh containers: Debian, Ubuntu, Fedora, openSUSE, Arch, Alpine,
+                                #   a sudo user, the macOS path with a fake Homebrew, and install.ps1 on pwsh
+tests/run.sh install --real     # adds a real Ollama install and model download (~2 GB)
 ```
+
+The installer tests use a stand-in for Ollama (`tests/install/fake-ollama`) so they run in a few minutes without downloads; real Homebrew and real Windows can't run in a container.
 
 The PowerShell container runs pwsh 7 on Linux with the Windows prompt; it can't stand in for Windows PowerShell 5.1.
